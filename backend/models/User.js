@@ -1,13 +1,28 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
+const partnerSchema = new mongoose.Schema(
+  {
+    vehicleType: { type: String, enum: ["bike", "scooter", "cycle", "ev"], default: "bike" },
+    vehicleNumber: { type: String, trim: true, uppercase: true },
+    licenseNumber: { type: String, trim: true, uppercase: true },
+    // New partners must be approved by an admin before they can go online.
+    verificationStatus: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+    isOnline: { type: Boolean, default: false },
+    location: {
+      lat: Number,
+      lng: Number,
+      updatedAt: Date,
+    },
+    completedTasks: { type: Number, default: 0 },
+    earnings: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: [true, "Name is required"],
-      trim: true,
-    },
+    name: { type: String, required: [true, "Name is required"], trim: true, maxlength: 80 },
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -15,40 +30,26 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
-    password: {
-      type: String,
-      required: [true, "Password is required"],
-      minlength: 6,
-    },
-    phone: {
-      type: String,
-      required: [true, "Phone number is required"],
-      trim: true,
-    },
-    role: {
-      type: String,
-      enum: ["customer", "admin"],
-      default: "customer",
-    },
-    address: {
-      type: String,
-      default: "",
-    },
+    password: { type: String, required: [true, "Password is required"], minlength: 6, select: false },
+    phone: { type: String, required: [true, "Phone number is required"], trim: true },
+    role: { type: String, enum: ["customer", "partner", "admin"], default: "customer" },
+    address: { type: String, default: "" },
+    partner: { type: partnerSchema, default: undefined },
   },
   { timestamps: true }
 );
 
-// Hash password before saving
+userSchema.index({ phone: 1 });
+userSchema.index({ role: 1, "partner.verificationStatus": 1 });
+
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
+  this.password = await bcrypt.hash(this.password, 10);
   next();
 });
 
-// Compare entered password with hashed password
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  return bcrypt.compare(enteredPassword, this.password);
+userSchema.methods.matchPassword = function (entered) {
+  return bcrypt.compare(entered, this.password);
 };
 
 module.exports = mongoose.model("User", userSchema);

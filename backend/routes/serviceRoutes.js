@@ -1,16 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const {
-  getServices,
-  createService,
-  updateService,
-  deleteService,
-} = require("../controllers/serviceController");
+const c = require("../controllers/serviceController");
 const { protect, adminOnly } = require("../middleware/auth");
+const validate = require("../middleware/validate");
 
-router.get("/", getServices);
-router.post("/", protect, adminOnly, createService);
-router.put("/:id", protect, adminOnly, updateService);
-router.delete("/:id", protect, adminOnly, deleteService);
+router.get("/", c.getServices);
+router.post("/", protect, adminOnly, validate(c.createServiceSchema), c.createService);
+router.put("/:id", protect, adminOnly, validate(c.updateServiceSchema), c.updateService);
+router.delete("/:id", protect, adminOnly, c.deleteService);
 
 module.exports = router;

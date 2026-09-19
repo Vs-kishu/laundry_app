@@ -1,76 +1,54 @@
+const { z } = require("zod");
 const Service = require("../models/Service");
+const asyncHandler = require("../utils/asyncHandler");
 
-// @desc  Get all active services
+const base = {
+  name: z.string().trim().min(2).max(80),
+  description: z.string().trim().max(300),
+  pricePerUnit: z.coerce.number().positive().max(100000),
+  unit: z.enum(["kg", "item"]),
+  category: z.enum(["wash_fold", "dry_clean", "iron_only", "wash_iron"]),
+};
+const createServiceSchema = z.object({
+  ...base,
+  description: base.description.optional().default(""),
+  unit: base.unit.default("kg"),
+  category: base.category.default("wash_fold"),
+});
+const updateServiceSchema = z.object({ ...base, isActive: z.boolean() }).partial();
+
 // @route GET /api/services
-const getServices = async (req, res) => {
-  try {
-    const services = await Service.find({ isActive: true }).sort({ category: 1 });
-    return res.json(services);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Server error while fetching services" });
-  }
+const getServices = asyncHandler(async (req, res) => {
+  const services = await Service.find({ isActive: true }).sort({ category: 1, name: 1 }).lean();
+  res.set("Cache-Control", "public, max-age=60");
+  res.json(services);
+});
+
+// @route POST /api/services (admin)
+const createService = asyncHandler(async (req, res) => {
+  res.status(201).json(await Service.create(req.body));
+});
+
+// @route PUT /api/services/:id (admin) - only whitelisted fields, validated by updateServiceSchema
+const updateService = asyncHandler(async (req, res) => {
+  const service = await Service.findById(req.params.id);
+  if (!service) return res.status(404).json({ message: "Service not found" });
+  Object.assign(service, req.body);
+  res.json(await service.save());
+});
+
+// @route DELETE /api/services/:id (admin) - soft delete so old orders keep their history
+const deleteService = asyncHandler(async (req, res) => {
+  const service = await Service.findByIdAndUpdate(req.params.id, { isActive: false });
+  if (!service) return res.status(404).json({ message: "Service not found" });
+  res.json({ message: "Service removed" });
+});
+
+module.exports = {
+  getServices,
+  createService,
+  updateService,
+  deleteService,
+  createServiceSchema,
+  updateServiceSchema,
 };
-
-// @desc  Create a new service (admin only)
-// @route POST /api/services
-const createService = async (req, res) => {
-  try {
-    const { name, description, pricePerUnit, unit, category } = req.body;
-
-    if (!name || !pricePerUnit) {
-      return res.status(400).json({ message: "Name and price are required" });
-    }
-
-    const service = await Service.create({
-      name,
-      description,
-      pricePerUnit,
-      unit,
-      category,
-    });
-
-    return res.status(201).json(service);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Server error while creating service" });
-  }
-};
-
-// @desc  Update a service (admin only)
-// @route PUT /api/services/:id
-const updateService = async (req, res) => {
-  try {
-    const service = await Service.findById(req.params.id);
-    if (!service) {
-      return res.status(404).json({ message: "Service not found" });
-    }
-
-    Object.assign(service, req.body);
-    const updated = await service.save();
-    return res.json(updated);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Server error while updating service" });
-  }
-};
-
-// @desc  Delete (deactivate) a service (admin only)
-// @route DELETE /api/services/:id
-const deleteService = async (req, res) => {
-  try {
-    const service = await Service.findById(req.params.id);
-    if (!service) {
-      return res.status(404).json({ message: "Service not found" });
-    }
-
-    service.isActive = false;
-    await service.save();
-    return res.json({ message: "Service removed" });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Server error while deleting service" });
-  }
-};
-
-module.exports = { getServices, createService, updateService, deleteService };

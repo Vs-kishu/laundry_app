@@ -1,37 +1,209 @@
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- Design tokens (RGB triplets so Tailwind opacity modifiers work) ---------- */
+:root {
+  --bg: 247 250 255;
+  --surface: 255 255 255;
+  --soft: 236 243 255;
+  --ink: 11 27 58;
+  --muted: 86 100 130;
+  --line: 224 231 244;
+  --brand: 47 107 255;
+  --brand-dark: 30 79 216;
+  --link: 30 79 216;
+  --aqua: 18 194 181;
+  --sun: 255 201 60;
+  --danger: 220 53 69;
+  --success: 16 150 100;
+  --shadow: 11 27 58;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: 7 12 24;
+  --surface: 14 22 40;
+  --soft: 19 31 60;
+  --ink: 232 238 252;
+  --muted: 148 163 192;
+  --line: 32 44 72;
+  --brand: 62 112 250;
+  --brand-dark: 84 132 255;
+  --link: 128 168 255;
+  --aqua: 32 214 200;
+  --sun: 255 210 90;
+  --danger: 255 107 117;
+  --success: 52 211 153;
+  --shadow: 0 0 0;
+  color-scheme: dark;
+}
+
 html {
   scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background-color: #f5f3ee;
-  color: #1b2430;
+  background-color: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family: var(--font-body), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display), system-ui, sans-serif;
+  letter-spacing: -0.02em;
 }
 
 ::selection {
-  background-color: #2f6f63;
-  color: #f5f3ee;
+  background-color: rgb(var(--brand));
+  color: #fff;
 }
 
-/* Visible keyboard focus for accessibility */
-a:focus-visible,
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid #b5542a;
+/* Visible keyboard focus */
+:focus-visible {
+  outline: 2px solid rgb(var(--brand));
   outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@layer components {
+  .container-x {
+    @apply mx-auto w-full max-w-6xl px-4 sm:px-6;
+  }
+
+  .btn {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full px-6 py-2.5 text-sm font-semibold
+      transition duration-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-primary {
+    @apply bg-brand text-white shadow-glow hover:bg-brand-dark;
+  }
+  .btn-secondary {
+    @apply border border-line bg-surface text-ink hover:border-brand/50 hover:bg-soft;
+  }
+  .btn-ghost {
+    @apply text-ink hover:bg-soft;
+  }
+  .btn-danger {
+    @apply border border-danger/40 text-danger hover:bg-danger/10;
+  }
+  .btn-sm {
+    @apply min-h-[36px] px-4 py-1.5 text-xs;
+  }
+
+  .card {
+    @apply rounded-3xl border border-line bg-surface shadow-card;
+  }
+
+  .input {
+    @apply w-full rounded-2xl border border-line bg-surface px-4 py-3 text-sm text-ink placeholder:text-muted/70
+      transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/15;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden bg-soft;
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/40 to-transparent;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-brand to-aqua bg-clip-text text-transparent;
+  }
+}
+
+/* ---------- Leaflet map markers ---------- */
+.lp-marker {
+  background: transparent;
+  border: 0;
+}
+.lp-pin {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  color: #fff;
+  box-shadow: 0 6px 14px rgb(0 0 0 / 0.3);
+  border: 3px solid #fff;
+}
+.lp-pin > svg {
+  width: 18px;
+  height: 18px;
+  transform: rotate(45deg);
+}
+.lp-pin.home {
+  background: rgb(47 107 255);
+}
+.lp-pin.store {
+  background: #f59e0b;
+}
+.lp-pin.draft {
+  background: #ef4444;
+}
+.lp-rider {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #0b1b3a;
+  color: #fff;
+  border: 3px solid #fff;
+  box-shadow: 0 6px 16px rgb(0 0 0 / 0.35);
+}
+.lp-rider > svg {
+  width: 22px;
+  height: 22px;
+}
+.lp-rider::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid rgb(18 194 181);
+  animation: ping2 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+/* Dark theme: recolour the light OSM tiles instead of loading a second tile provider */
+:root[data-theme="dark"] .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.92) saturate(0.75);
+}
+/* Smooth movement between GPS updates */
+.leaflet-marker-icon.lp-smooth {
+  transition: transform 1s linear;
+}
+.leaflet-container {
+  font-family: var(--font-body), system-ui, sans-serif;
+  background: rgb(var(--soft));
+}
+.leaflet-control-attribution {
+  font-size: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

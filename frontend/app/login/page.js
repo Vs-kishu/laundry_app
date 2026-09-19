@@ -1,14 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useAuth } from "../../context/AuthContext";
+import { roleHome, useAuth } from "../../context/AuthContext";
+import { errMsg } from "../../lib/api";
+import AuthShell from "../../components/AuthShell";
+import { Alert, Field } from "../../components/ui";
 
-export default function LoginPage() {
+function LoginForm() {
   const { login } = useAuth();
   const router = useRouter();
-  const [form, setForm] = useState({ email: "", password: "" });
+  const params = useSearchParams();
+  const [form, setForm] = useState({ identifier: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -17,61 +21,52 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(form.email, form.password);
-      router.push("/book");
+      const user = await login(form.identifier, form.password);
+      const next = params.get("next");
+      // only follow same-site relative paths (prevents open redirects)
+      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+      router.push(user.role === "customer" && safeNext ? safeNext : roleHome(user.role));
     } catch (err) {
-      setError(err.response?.data?.message || "Invalid email or password.");
+      setError(errMsg(err, "Invalid email or password."));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="mx-auto max-w-md px-6 py-16">
-      <h1 className="font-display text-3xl text-ink">Welcome back</h1>
-      <p className="mt-2 text-sm text-ink/70">Log in to book a pickup or check your order status.</p>
-
-      <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-        <div>
-          <label className="text-sm text-ink/70" htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            required
-            className="mt-1 w-full rounded-lg border border-ink/20 bg-canvas px-4 py-2.5 text-ink focus:border-soap"
-          />
-        </div>
-        <div>
-          <label className="text-sm text-ink/70" htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-            required
-            className="mt-1 w-full rounded-lg border border-ink/20 bg-canvas px-4 py-2.5 text-ink focus:border-soap"
-          />
-        </div>
-
-        {error && <p className="text-sm text-rust">{error}</p>}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-full bg-soap px-6 py-3 text-canvas hover:bg-soapDark transition-colors disabled:opacity-60"
-        >
+    <AuthShell
+      title="Welcome back"
+      subtitle="Log in to book a pickup, track an order or start taking deliveries."
+      footer={
+        <>
+          New to Laundry Point?{" "}
+          <Link href="/signup" className="font-semibold text-link hover:underline">Create an account</Link>
+          {" · "}
+          <Link href="/partner/signup" className="font-semibold text-link hover:underline">Become a partner</Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate={false}>
+        {params.get("expired") && <Alert tone="warn">Your session expired. Please log in again.</Alert>}
+        <Field label="Email or mobile number" htmlFor="identifier">
+          <input id="identifier" type="text" inputMode="email" autoComplete="username" value={form.identifier} onChange={(e) => setForm({ ...form, identifier: e.target.value })} required className="input" placeholder="you@example.com or 98765 43210" />
+        </Field>
+        <Field label="Password" htmlFor="password">
+          <input id="password" type="password" autoComplete="current-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required className="input" placeholder="Your password" />
+        </Field>
+        {error && <Alert>{error}</Alert>}
+        <button type="submit" disabled={loading} className="btn btn-primary w-full py-3.5">
           {loading ? "Logging in…" : "Log in"}
         </button>
       </form>
+    </AuthShell>
+  );
+}
 
-      <p className="mt-6 text-sm text-ink/70">
-        New to Basin?{" "}
-        <Link href="/signup" className="text-soap hover:underline">
-          Create an account
-        </Link>
-      </p>
-    </div>
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }
