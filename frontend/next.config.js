@@ -18,6 +18,8 @@ const nextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       // Long-lived caching for static brand assets
+      // The service worker must always be revalidated so updates roll out
+      { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }, { key: "Service-Worker-Allowed", value: "/" }] },
       { source: "/icon.svg", headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
     ];
   },

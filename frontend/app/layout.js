@@ -37,6 +37,8 @@ export const metadata = {
   twitter: { card: "summary_large_image", title: `${SITE.name} - ${SITE.tagline}`, description: SITE.description },
   robots: { index: true, follow: true, googleBot: { index: true, follow: true, "max-image-preview": "large" } },
   formatDetection: { telephone: false },
+  icons: { icon: "/icon.svg", apple: "/icons/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: SITE.name, statusBarStyle: "default" },
 };
 
 // Runs before first paint so the saved / system theme never flashes the wrong colours.
