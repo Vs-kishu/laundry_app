@@ -4,6 +4,7 @@ Doorstep laundry with Zepto/Blinkit-style live tracking: customer books, a deliv
 picks up (home to store), the store cleans, a partner delivers (store to home) - all on a live map.
 
 - **frontend/** Next.js 14 (App Router), Tailwind, Leaflet, Socket.IO client
+- **mobile/** Expo React Native app for customers and drivers (see mobile/README.md)
 - **backend/** Express, MongoDB (Mongoose), Socket.IO, zod validation
 
 ## Run locally

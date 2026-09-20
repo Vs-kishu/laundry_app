@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Laundry Point",
+    "slug": "laundry-point",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.laundrypoint.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Laundry Point uses your location to set your pickup address and, for drivers, to share live tracking with customers."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#F7FAFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.laundrypoint.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ],
+      "usesCleartextTraffic": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Laundry Point uses your location to set your pickup address and, for drivers, to share live tracking with customers."
+        }
+      ]
+    ],
+    "scheme": "laundrypoint"
+  }
+}
