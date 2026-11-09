@@ -8,6 +8,7 @@
     "start": "node server.js",
     "seed": "node seed.js",
     "seed:demo": "node seed-demo.js",
+    "seed:partners": "node seed-demo-partners.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {

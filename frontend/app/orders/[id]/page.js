@@ -38,6 +38,76 @@ function OtpCard({ label, code, who }) {
   );
 }
 
+function PaymentInstructions({ order, reload }) {
+  const [config, setConfig] = useState(null);
+  const [paymentUtr, setPaymentUtr] = useState(order.paymentUtr || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => setPaymentUtr(order.paymentUtr || ""), [order.paymentUtr]);
+
+  useEffect(() => {
+    if (order.paymentStatus !== "pending") return;
+    api.get("/payments/config")
+      .then(({ data }) => {
+        setConfig(data);
+        if (!data.upiId || !data.qrImageData) setError("UPI payment details are not available. Please contact support; do not transfer money.");
+      })
+      .catch((err) => setError(errMsg(err, "Couldn't load the UPI payment details.")));
+  }, [order.paymentStatus]);
+
+  const submitReference = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/orders/${order._id}/payment-reference`, { paymentUtr });
+      await reload();
+    } catch (err) {
+      setError(errMsg(err, "Couldn't submit your payment reference."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (order.status !== "payment_pending") return null;
+  if (order.paymentStatus === "submitted") {
+    return (
+      <section className="card border border-sun/60 p-5" aria-live="polite">
+        <h2 className="text-lg font-bold">Payment submitted for verification</h2>
+        <p className="mt-2 text-sm text-muted">Your reference {order.paymentUtr} has been submitted. We will confirm the order after an admin verifies the transfer.</p>
+      </section>
+    );
+  }
+
+  const upiLink = config?.upiId
+    ? `upi://pay?pa=${encodeURIComponent(config.upiId)}&pn=${encodeURIComponent("Laundry Point")}&am=${Number(order.totalAmount).toFixed(2)}&cu=INR&tn=${encodeURIComponent(order.orderNumber)}`
+    : "";
+
+  return (
+    <section className="card border border-sun/60 p-5">
+      <h2 className="text-lg font-bold">Pay {money(order.totalAmount)} by UPI</h2>
+      <p className="mt-1 text-sm text-muted">Scan this QR or pay to the UPI ID below. Your order will only be sent for pickup after we verify your payment.</p>
+      {config?.qrImageData ? <img src={config.qrImageData} alt="Laundry Point UPI payment QR" className="mx-auto mt-4 h-56 w-56 rounded-xl border border-line bg-white object-contain p-2" /> : <p className="mt-4 text-sm text-muted">{error ? "Payment QR unavailable." : "Loading payment QR…"}</p>}
+      {config?.upiId && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-soft p-3">
+          <p className="font-semibold">{config.upiId}</p>
+          <a href={upiLink} className="btn btn-secondary btn-sm">Open UPI app</a>
+        </div>
+      )}
+      {order.paymentReviewNote && <div className="mt-4"><Alert>{order.paymentReviewNote} Please pay and submit a new UPI reference.</Alert></div>}
+      {error && <div className="mt-4"><Alert>{error}</Alert></div>}
+      <form onSubmit={submitReference} className="mt-4 space-y-3">
+        <div>
+          <label htmlFor="payment-utr" className="label">UPI transaction reference / UTR</label>
+          <input id="payment-utr" className="input" value={paymentUtr} onChange={(event) => setPaymentUtr(event.target.value)} minLength={6} maxLength={50} pattern="[A-Za-z0-9-]{6,50}" autoComplete="off" required />
+        </div>
+        <button className="btn btn-primary" disabled={busy || !config?.upiId || !config?.qrImageData}>{busy ? "Submitting…" : "I have paid — submit reference"}</button>
+      </form>
+    </section>
+  );
+}
+
 export default function OrderTrackingPage() {
   const { id } = useParams();
   const { user, ready } = useRequireRole(["customer", "admin", "super_admin"]);
@@ -95,7 +165,9 @@ export default function OrderTrackingPage() {
 
   const headline = headlineFor(order, live);
   const showMap = order.status !== "cancelled";
-  const canCancel = user?.role === "customer" && CUSTOMER_CANCELLABLE_UI.includes(order.status);
+  const canCancel = user?.role === "customer" &&
+    CUSTOMER_CANCELLABLE_UI.includes(order.status) &&
+    (order.status !== "payment_pending" || order.paymentStatus === "pending");
   const eta = isLive && live?.etaMinutes;
 
   return (
@@ -135,7 +207,9 @@ export default function OrderTrackingPage() {
             )}
           </div>
 
-          {showMap && (
+            {user?.role === "customer" && <PaymentInstructions order={order} reload={reload} />}
+
+            {showMap && (
             <div className="card relative h-[340px] overflow-hidden sm:h-[440px]">
               <MapCanvas
                 markers={markers}
@@ -217,7 +291,7 @@ export default function OrderTrackingPage() {
               </li>
             </ul>
             <p className="mt-2 text-xs text-muted">
-              {order.paymentStatus === "refunded" ? "Refunded to wallet" : order.paymentMethod === "wallet" ? "Paid from wallet" : order.paymentStatus === "paid" ? "Paid online" : "Payment pending"}
+              {order.paymentStatus === "refunded" ? "Refunded" : order.paymentStatus === "paid" ? "Paid" : order.paymentStatus === "submitted" ? "Payment submitted — awaiting verification" : "Payment pending"}
             </p>
 
             <div className="mt-5 space-y-3 border-t border-line pt-5 text-sm">

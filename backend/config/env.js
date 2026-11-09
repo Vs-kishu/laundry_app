@@ -11,15 +11,6 @@ function validateEnv() {
     console.error("JWT_SECRET must be at least 32 characters in production");
     process.exit(1);
   }
-  const paymentKeys = ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"];
-  if (isProd && [...paymentKeys, "RAZORPAY_WEBHOOK_SECRET"].some((key) => !process.env[key])) {
-    console.error("Production requires RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and RAZORPAY_WEBHOOK_SECRET");
-    process.exit(1);
-  }
-  if (paymentKeys.some((key) => process.env[key]) && paymentKeys.some((key) => !process.env[key])) {
-    console.error("Set both RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to enable online payments");
-    process.exit(1);
-  }
 }
 
 // CLIENT_URL may hold several origins, comma separated.

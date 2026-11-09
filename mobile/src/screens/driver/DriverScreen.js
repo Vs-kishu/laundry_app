@@ -28,13 +28,47 @@ export default function DriverScreen() {
   const [online, setOnline] = useState(!!user.partner?.isOnline);
   const [available, setAvailable] = useState([]);
   const [mine, setMine] = useState({ active: [], history: [] });
+  const [payoutSummary, setPayoutSummary] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [myPos, setMyPos] = useState(null);
   const [gpsError, setGpsError] = useState("");
+  const [gpsBusy, setGpsBusy] = useState(false);
+  const [settingsRequired, setSettingsRequired] = useState(false);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [otp, setOtp] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  const getLocationFix = async () => {
+    const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") {
+      const error = new Error("Location access is required to accept or update tasks.");
+      error.canOpenSettings = !canAskAgain;
+      throw error;
+    }
+    setSettingsRequired(false);
+    if (!(await Location.hasServicesEnabledAsync())) {
+      throw new Error("Turn on device location services and try again.");
+    }
+    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+    return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+  };
+
+  const enableLocation = async () => {
+    if (!online) return toggle(true);
+    setGpsBusy(true);
+    setError("");
+    setGpsError("");
+    try {
+      setMyPos(await getLocationFix());
+    } catch (e) {
+      setMyPos(null);
+      setSettingsRequired(Boolean(e.canOpenSettings));
+      setGpsError(e.message || "Couldn't get a GPS fix. Turn on location services and try again.");
+    } finally {
+      setGpsBusy(false);
+    }
+  };
 
   const loadTasks = useCallback(async () => {
     if (!approved) return;
@@ -46,6 +80,19 @@ export default function DriverScreen() {
       setError(errMsg(e, "Couldn't refresh tasks."));
     }
   }, [approved]);
+
+  const loadPayoutSummary = useCallback(async () => {
+    const { data } = await api.get("/partner/payout");
+    setPayoutSummary(data);
+  }, []);
+
+  useEffect(() => {
+    if (!approved) return;
+    loadPayoutSummary().catch((e) => setError(errMsg(e, "Couldn't load your earnings.")));
+    const socket = getSocket(token);
+    socket?.on("partner:earnings", loadPayoutSummary);
+    return () => socket?.off("partner:earnings", loadPayoutSummary);
+  }, [approved, token, loadPayoutSummary]);
 
   // tasks + live pushes
   useEffect(() => {
@@ -80,8 +127,17 @@ export default function DriverScreen() {
     let cancelled = false;
     activateKeepAwakeAsync("driver-online").catch(() => {});
     (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return setGpsError("Location permission denied - allow it so customers can track you.");
+      const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        setMyPos(null);
+        setSettingsRequired(!canAskAgain);
+        return setGpsError("Location access is required to accept or update tasks.");
+      }
+      setSettingsRequired(false);
+      if (!(await Location.hasServicesEnabledAsync())) {
+        setMyPos(null);
+        return setGpsError("Turn on device location services and try again.");
+      }
       setGpsError("");
       sub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.High, timeInterval: 2000, distanceInterval: 5 },
@@ -92,7 +148,10 @@ export default function DriverScreen() {
         }
       );
       if (cancelled) sub.remove();
-    })().catch(() => setGpsError("Can't get a GPS fix yet…"));
+    })().catch(() => {
+      setMyPos(null);
+      setGpsError("Can't get a GPS fix yet. Turn on location services and try again.");
+    });
     return () => {
       cancelled = true;
       sub?.remove();
@@ -116,14 +175,12 @@ export default function DriverScreen() {
 
   const toggle = async (value) => {
     setError("");
+    setGpsError("");
     try {
       let location;
       if (value) {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") throw new Error("Allow location access in Settings to go online.");
-        if (!(await Location.hasServicesEnabledAsync())) throw new Error("Turn on device location services to go online.");
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setGpsBusy(true);
+        location = await getLocationFix();
         setMyPos(location);
         setGpsError("");
       }
@@ -133,18 +190,45 @@ export default function DriverScreen() {
       await refreshUser();
       loadTasks();
     } catch (e) {
-      setError(errMsg(e));
+      setMyPos(value ? null : myPos);
+      setSettingsRequired(Boolean(e.canOpenSettings));
+      setError(e.message || errMsg(e));
+      if (value) setGpsError(e.message || "Location access is required to go online.");
+    } finally {
+      setGpsBusy(false);
     }
   };
 
   const accept = async (t) => {
+    if (!myPos) {
+      setGpsError("Enable location and wait for a fresh GPS fix before accepting tasks.");
+      return;
+    }
     setBusyId(t.orderId);
     setError("");
     try {
       const { data } = await api.post(`/partner/tasks/${t.orderId}/accept`, { leg: t.leg });
       setSelectedId(data._id);
     } catch (e) {
-      setError(errMsg(e));
+      const message = errMsg(e);
+      if (e.response?.status === 409 && message.toLowerCase().includes("location")) {
+        setMyPos(null);
+        setGpsError(message);
+      } else {
+        setError(message);
+      }
+    }
+    await loadTasks();
+    setBusyId(null);
+  };
+
+  const decline = async (t) => {
+    setBusyId(t.orderId);
+    setError("");
+    try {
+      await api.post(`/partner/tasks/${t.orderId}/decline`, { leg: t.leg });
+    } catch (e) {
+      setError(errMsg(e, "Couldn't decline this task."));
     }
     await loadTasks();
     setBusyId(null);
@@ -152,6 +236,10 @@ export default function DriverScreen() {
 
   const advance = async () => {
     if (!selected || !action) return;
+    if (!myPos) {
+      setGpsError("Enable location and wait for a fresh GPS fix before updating tasks.");
+      return;
+    }
     if (action.needsOtp && !/^\d{4}$/.test(otp)) return setError("Enter the customer's 4-digit OTP.");
     setBusyId(selected._id);
     setError("");
@@ -160,7 +248,13 @@ export default function DriverScreen() {
       setOtp("");
       await Promise.all([loadTasks(), refreshUser()]);
     } catch (e) {
-      setError(errMsg(e));
+      const message = errMsg(e);
+      if (e.response?.status === 409 && message.toLowerCase().includes("location")) {
+        setMyPos(null);
+        setGpsError(message);
+      } else {
+        setError(message);
+      }
     }
     setBusyId(null);
   };
@@ -206,7 +300,7 @@ export default function DriverScreen() {
           {approved && (
             <>
               <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
-                {[["Tasks done", user.partner.completedTasks], ["Earnings", money(user.partner.earnings)], ["Active", mine.active.length]].map(([k, v]) => (
+                {[["Tasks done", user.partner.completedTasks], ["Pending payout", payoutSummary ? money(payoutSummary.pending.amount) : "—"], ["Active", mine.active.length]].map(([k, v]) => (
                   <Card key={k} style={{ flex: 1, alignItems: "center", padding: 12 }}>
                     <Text style={{ fontSize: 20, fontWeight: "800", color: colors.ink }}>{v}</Text>
                     <Muted>{k}</Muted>
@@ -215,16 +309,25 @@ export default function DriverScreen() {
               </View>
 
               {error ? <Alert>{error}</Alert> : null}
-              {online && gpsError ? <Alert tone="warn">{gpsError}</Alert> : null}
+              {online && gpsError && myPos ? <Alert tone="warn">{gpsError}</Alert> : null}
 
               {!online ? (
                 <Card style={{ alignItems: "center", padding: 24 }}>
                   <Ionicons name="bicycle" size={40} color={colors.teal} />
                   <Text style={{ fontWeight: "800", fontSize: 17, color: colors.ink, marginTop: 8 }}>You're offline</Text>
                   <Muted style={{ textAlign: "center", marginTop: 4 }}>Go online to see nearby pickups and deliveries. Keep the app open so customers can track you.</Muted>
+                  <Button title={gpsBusy ? "Getting location…" : "Enable location and go online"} icon="locate" onPress={enableLocation} loading={gpsBusy} style={{ marginTop: 14 }} />
+                  {settingsRequired && <Button title="Open app settings" icon="settings" variant="secondary" onPress={() => Linking.openSettings()} style={{ marginTop: 8 }} />}
                 </Card>
               ) : (
                 <>
+                  {!myPos && (
+                    <Card style={{ marginBottom: 14 }}>
+                      <Alert tone="warn">{gpsError || "Enable location to accept or update tasks. A fresh GPS fix is required."}</Alert>
+                      <Button title={gpsBusy ? "Getting location…" : "Enable location to continue"} icon="locate" onPress={enableLocation} loading={gpsBusy} />
+                      {settingsRequired && <Button title="Open app settings" icon="settings" variant="secondary" onPress={() => Linking.openSettings()} style={{ marginTop: 8 }} />}
+                    </Card>
+                  )}
                   {mine.active.length > 1 && (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
                       {mine.active.map((t) => (
@@ -261,7 +364,7 @@ export default function DriverScreen() {
                       {selected.notes ? <Muted style={{ marginTop: 8 }}>“{selected.notes}”</Muted> : null}
                       {selected.status === "out_for_delivery" && (
                         <Text style={{ backgroundColor: "#FFF1CC", color: colors.ink, fontWeight: "800", padding: 10, borderRadius: radius.md, marginTop: 10, overflow: "hidden" }}>
-                          Payment: {selected.paymentStatus === "refunded" ? "Refunded to wallet" : selected.paymentMethod === "wallet" ? "Paid from wallet" : selected.paymentStatus === "paid" ? "Paid online" : "Not paid"}
+                          Payment: {selected.paymentStatus === "refunded" ? "Refunded" : selected.paymentStatus === "paid" ? "Paid" : "Not paid"}
                         </Text>
                       )}
                       {destination && (
@@ -282,7 +385,7 @@ export default function DriverScreen() {
                             style={{ borderWidth: 1, borderColor: colors.line, borderRadius: radius.md, textAlign: "center", fontSize: 26, fontWeight: "800", letterSpacing: 10, paddingVertical: 10, marginBottom: 12, color: colors.ink }}
                           />
                         )}
-                        <Button title={action.label} onPress={advance} loading={busyId === selected._id} />
+                        <Button title={action.label} onPress={advance} loading={busyId === selected._id} disabled={!myPos} />
                       </View>
                     </Card>
                   )}
@@ -293,13 +396,19 @@ export default function DriverScreen() {
                     <Card key={`${t.orderId}-${t.leg}`} style={{ marginBottom: 10 }}>
                       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                         <Text style={{ fontWeight: "800", color: colors.brandDark }}>{t.leg === "pickup" ? "Pickup" : "Delivery"}{t.express ? "  ⚡ Express" : ""}</Text>
-                        <Text style={{ fontWeight: "800", color: colors.success, fontSize: 17 }}>{money(t.payout)}</Text>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={{ fontWeight: "800", color: colors.success, fontSize: 17 }}>{money(t.payout)}</Text>
+                          <Muted>per completed leg</Muted>
+                        </View>
                       </View>
                       <Text numberOfLines={2} style={{ color: colors.ink, marginTop: 8 }}>{t.address}</Text>
                       <Muted style={{ marginTop: 4 }}>
-                        {t.toFirstStopKm != null ? `${t.toFirstStopKm} km to first stop · ` : ""}{t.tripKm} km trip
+                        {t.toFirstStopKm} km to {t.leg === "pickup" ? "customer pickup" : "store pickup"} · within {t.rangeKm} km range · {t.tripKm} km trip
                       </Muted>
-                      <Button title="Accept task" onPress={() => accept(t)} loading={busyId === t.orderId} style={{ marginTop: 12 }} />
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                        <Button title={busyId === t.orderId ? "Working…" : "Accept"} onPress={() => accept(t)} loading={busyId === t.orderId} disabled={busyId === t.orderId || !myPos} style={{ flex: 1 }} />
+                        <Button title="Decline" variant="secondary" onPress={() => decline(t)} disabled={busyId === t.orderId} style={{ flex: 1 }} />
+                      </View>
                     </Card>
                   ))}
 

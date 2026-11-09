@@ -71,7 +71,6 @@ const userPayload = (u, withToken = false) => ({
   phone: u.phone,
   role: u.role,
   address: u.address,
-  walletBalance: u.walletBalance || 0,
   ...(u.role === "partner" && u.partner
     ? {
         partner: {
@@ -80,7 +79,6 @@ const userPayload = (u, withToken = false) => ({
           vehicleType: u.partner.vehicleType,
           vehicleNumber: u.partner.vehicleNumber,
           completedTasks: u.partner.completedTasks,
-          earnings: u.partner.earnings,
         },
       }
     : {}),

@@ -1,11 +1,12 @@
 // Order lifecycle.
 //
-//  placed -> (partner accepts pickup) pickup_assigned -> (pickup OTP) picked_up -> (arrives) at_store
+//  payment_pending -> (admin verifies UPI transfer) placed -> (partner accepts pickup) pickup_assigned -> (pickup OTP) picked_up -> (arrives) at_store
 //  at_store -> (admin) in_progress -> (admin) ready -> (partner accepts delivery) delivery_assigned
 //  delivery_assigned -> (leaves store) out_for_delivery -> (delivery OTP) delivered
 //
 // `cancelled` is reachable from placed / pickup_assigned (customer) or any open state (admin).
 const STATUSES = [
+  "payment_pending",
   "placed",
   "pickup_assigned",
   "picked_up",
@@ -21,7 +22,7 @@ const STATUSES = [
 const PICKUP_ACTIVE = ["pickup_assigned", "picked_up"];
 const DELIVERY_ACTIVE = ["delivery_assigned", "out_for_delivery"];
 const TERMINAL = ["delivered", "cancelled"];
-const CUSTOMER_CANCELLABLE = ["placed", "pickup_assigned"];
+const CUSTOMER_CANCELLABLE = ["payment_pending", "placed", "pickup_assigned"];
 
 // Statuses an admin may move an order to manually, keyed by the current status.
 const ADMIN_TRANSITIONS = {

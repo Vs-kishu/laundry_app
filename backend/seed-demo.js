@@ -180,7 +180,7 @@ async function create() {
 
   for (const r of [r1, r2]) {
     const n = tasksDone.get(String(r._id)) || 0;
-    await User.updateOne({ _id: r._id }, { $set: { "partner.completedTasks": n, "partner.earnings": n * C.PARTNER_PAYOUT_PER_TASK } });
+    await User.updateOne({ _id: r._id }, { $set: { "partner.completedTasks": n } });
   }
   console.log(`Created ${plan.length} demo orders in all states (delivered, cleaning, ready, placed, cancelled).`);
   return creds;

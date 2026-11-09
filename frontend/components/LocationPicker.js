@@ -13,6 +13,7 @@ export default function LocationPicker({ value, onChange, store, onGpsChange }) 
   const [searching, setSearching] = useState(false);
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState("");
+  const [gpsGranted, setGpsGranted] = useState(false);
   const skipSearch = useRef(false);
 
   const markers = useMemo(() => {
@@ -59,19 +60,24 @@ export default function LocationPicker({ value, onChange, store, onGpsChange }) 
 
   const useMyLocation = () => {
     setGeoError("");
+    setGpsGranted(false);
     onGpsChange?.(false);
     if (!navigator.geolocation) return setGeoError("Your browser doesn't support location.");
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocating(false);
+        setGpsGranted(true);
         onGpsChange?.(true);
         pick({ lat: pos.coords.latitude, lng: pos.coords.longitude });
       },
-      () => {
+      (error) => {
         setLocating(false);
+        setGpsGranted(false);
         onGpsChange?.(false);
-        setGeoError("Couldn't get your location. Allow location access, or search / tap on the map.");
+        setGeoError(error.code === 1
+          ? "Location access is blocked. Allow it in your browser's site settings, then try again."
+          : "Couldn't get your location. Turn on device location services and try again.");
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
@@ -114,7 +120,7 @@ export default function LocationPicker({ value, onChange, store, onGpsChange }) 
       </div>
 
       <button type="button" onClick={useMyLocation} disabled={locating} className="btn btn-secondary btn-sm mt-3">
-        <Icon name="locate" className="h-4 w-4" /> {locating ? "Locating…" : "Use my current location"}
+        <Icon name="locate" className="h-4 w-4" /> {locating ? "Locating…" : gpsGranted ? "Refresh current location" : "Enable location to continue"}
       </button>
       {geoError && <p className="mt-2 text-xs text-danger">{geoError}</p>}
 

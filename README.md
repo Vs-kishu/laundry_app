@@ -34,23 +34,29 @@ Existing accounts are never overwritten. In production, configure `SEED_ADMIN_EM
 customer and delivery-partner accounts are only created outside production. Both admin roles
 use the admin console at `/admin`.
 
+To add five approved nearby delivery partners for testing, first confirm `MONGO_URI` points to your
+intended non-production database, then run `cd backend && npm run seed:partners -- --yes`.
+The script uses the database configured by `MONGO_URI`, only creates `testrider1`–`testrider5` demo
+accounts, and prints their generated passwords once. Set `DEMO_PASSWORD` before running to use a
+shared password. These are demo accounts; do not use them in production.
+
 The admin portal is available at `/admin` (sign in at `/admin/login`). Customers must allow
 location access and use their current GPS location to book; delivery partners must allow GPS
 before going online. Deploy over HTTPS so browsers can grant geolocation permission.
 
-Orders are paid online through Razorpay before they are created; customers may instead pay
-from their wallet when its balance covers the full order. Razorpay checkout enables UPI, where
-the payment provider may offer a QR option depending on merchant/account settings. Set `RAZORPAY_KEY_ID` and
-`RAZORPAY_KEY_SECRET` in the backend environment, starting with Razorpay test credentials;
-enable automatic payment capture in the Razorpay account. Configure a Razorpay webhook for
-`POST /api/orders/payment/webhook` using the `payment.captured` event, and set its signing
-secret as `RAZORPAY_WEBHOOK_SECRET`.
-The backend creates and verifies payment orders; do not put the secret in frontend/mobile
-configuration. Customers can add money to their wallet online and review wallet transactions.
-Partner task earnings are credited to the partner wallet immediately when each pickup or delivery
-leg is completed. Partner withdrawals are not enabled yet. The admin portal's Wallet ledger tab shows payment entries, partner earnings,
-and outstanding customer/partner wallet balances. Wallet updates use MongoDB transactions, so
-configure MongoDB as a replica set (MongoDB Atlas already supports this).
+Orders use a manual UPI payment flow. A super admin uploads the merchant QR image and sets the UPI ID
+in Dashboard → UPI settings. Customers scan the QR or open a UPI app, pay the order total, and submit
+the transaction reference. An admin verifies the transfer before the order enters the pickup queue;
+rejected references can be corrected and resubmitted. UPI settings are stored in MongoDB and served
+to customers as public payment details, so do not upload private account documents.
+
+Partners earn 10% of the final paid order total for each completed leg: pickup
+earnings are recorded when items are handed over at the store, and delivery earnings after the
+customer confirms delivery with their OTP. Partners can save a UPI ID or bank account in Earnings
+& payouts. Admins manually send pending payouts using those details and record the transfer
+reference in Dashboard → Partner payouts. This payout flow does not transfer money automatically.
+Task completion and its earning record are saved in one MongoDB transaction, so configure MongoDB
+as a replica set (MongoDB Atlas already supports this).
 Offers (percentage, fixed amount, BOGO for item-based services, and quantity
 threshold discounts) are managed from Dashboard → Offers. `npm run seed` adds `WELCOME15`,
 `BULK10`, and `BOGOIRON` starter offers without overwriting existing offers.
@@ -65,8 +71,14 @@ connection notifications, not background push delivery when an app is closed.
 - **Partner** `/partner/signup` -> admin approves -> `/partner` (online status is saved until manually switched off; refreshing does not take the partner offline; accept tasks with GPS enabled, navigate, OTP handover, GPS streamed over socket)
 - **Admin** `/admin` (approve partners, run store steps, assign/cancel, stats)
 
-`placed -> pickup_assigned -> picked_up (pickup OTP) -> at_store -> in_progress -> ready ->
+`payment_pending (UPI reference submitted) -> placed (admin verifies payment) -> pickup_assigned ->
+picked_up (pickup OTP) -> at_store -> in_progress -> ready ->
 delivery_assigned -> out_for_delivery -> delivered (delivery OTP)`
+
+Available pickup/delivery offers are shown to online partners with a fresh GPS fix whose distance
+to that task's first pickup stop is within the store's configured service radius. A partner can
+accept or decline; declining hides only that task leg from that partner, leaving it available to
+other in-range partners.
 
 ## Testing the tracking without a bike
 
@@ -78,5 +90,5 @@ current destination. Or use Chrome DevTools > Sensors to override location.
 - Map tiles: the default OpenStreetMap server is fair-use only; set `NEXT_PUBLIC_MAP_TILE_URL` to a provider key. Routing (OSRM demo) and address search (Nominatim) are also public demo services - swap for your own/paid ones at scale (`frontend/lib/geo.js`).
 - Set `NEXT_PUBLIC_SITE_URL` (canonical URLs, sitemap, OG) and `CLIENT_URL` (CORS, comma-separated).
 - Socket.IO keeps in-memory state: with more than one backend instance add the Redis adapter and sticky sessions.
-- Payments are cash-on-delivery only. Partner "verification" is manual admin approval of typed details - add document upload/KYC before onboarding real riders.
+- Orders require upfront UPI payment and manual admin verification. Partner "verification" is manual admin approval of typed details - add document upload/KYC before onboarding real riders.
 - JWT lives in localStorage; move to httpOnly cookies if you want stronger XSS protection.

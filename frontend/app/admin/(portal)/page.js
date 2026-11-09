@@ -13,6 +13,7 @@ import { itemsSummary, money, timeOnly } from "../../../lib/format";
 
 const FILTERS = [
   ["open", "Open"],
+  ["payment_pending", "Awaiting payment"],
   ["placed", "Needs pickup partner"],
   ["at_store", "At store"],
   ["in_progress", "Cleaning"],
@@ -45,7 +46,7 @@ function OrderRow({ o, partners, onAction, busy }) {
         <div className="text-right">
           <StatusChip status={o.status} />
           <p className="mt-1 font-display font-bold">{money(o.totalAmount)}</p>
-          <p className="mt-1 text-xs text-muted">{o.paymentStatus === "refunded" ? "Refunded to wallet" : o.paymentMethod === "wallet" ? "Paid from wallet" : o.paymentStatus === "paid" ? "Paid online" : "Payment pending"}{o.couponCode ? ` · ${o.couponCode}` : ""}</p>
+          <p className="mt-1 text-xs text-muted">{o.paymentStatus === "refunded" ? "Refunded" : o.paymentStatus === "paid" ? "Paid" : o.paymentStatus === "submitted" ? "UPI reference submitted" : "Payment pending"}{o.couponCode ? ` · ${o.couponCode}` : ""}</p>
         </div>
       </div>
 
@@ -153,50 +154,179 @@ function StoreSettings() {
   );
 }
 
-function WalletLedgerPanel() {
-  const [ledger, setLedger] = useState(null);
+function PartnerPayoutsPanel() {
+  const [summary, setSummary] = useState(null);
+  const [references, setReferences] = useState({});
+  const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    api.get("/admin/wallet")
-      .then(({ data }) => setLedger(data))
-      .catch((err) => setError(errMsg(err, "Couldn't load the platform ledger.")));
+  const loadPayouts = useCallback(async () => {
+    const { data } = await api.get("/admin/partner-earnings");
+    setSummary(data);
   }, []);
 
-  if (error) return <div className="mt-6"><Alert>{error}</Alert></div>;
-  if (!ledger) return <div className="mt-6 skeleton h-64 rounded-3xl" />;
+  useEffect(() => {
+    loadPayouts().catch((err) => setError(errMsg(err, "Couldn't load partner payouts.")));
+  }, [loadPayouts]);
 
-  const cards = [
-    ["Order payments", ledger.incoming.order_payment?.total || 0],
-    ["Wallet top-ups", ledger.incoming.wallet_topup?.total || 0],
-    ["Partner earnings credited", ledger.partnerEarnings],
-    ["Customer wallet balance", ledger.customerWalletLiability],
-    ["Partner wallet balance", ledger.partnerWalletLiability],
-  ];
+  const markPaid = async (earningId) => {
+    const payoutReference = references[earningId]?.trim();
+    if (!payoutReference) {
+      setError("Enter the bank/UPI transfer reference after sending the payout.");
+      return;
+    }
+    setError("");
+    setBusyId(earningId);
+    try {
+      await api.put(`/admin/partner-earnings/${earningId}/pay`, { payoutReference });
+      await loadPayouts();
+    } catch (err) {
+      setError(errMsg(err, "Couldn't record the partner payout."));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!summary) return <div className="mt-6">{error ? <Alert>{error}</Alert> : <div className="skeleton h-64 rounded-3xl" />}</div>;
 
   return (
     <section className="mt-6">
-      <p className="text-sm text-muted">Platform ledger and outstanding wallet balances. Partner earnings become available immediately after each task leg is completed.</p>
-      <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {cards.map(([label, amount]) => (
+      <p className="text-sm text-muted">Partners earn 10% of the final order total for each completed leg. Send each payout to the saved UPI/bank details, then record its transfer reference here.</p>
+      {error && <div className="mt-4"><Alert>{error}</Alert></div>}
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        {[
+          ["Pending payout", summary.pending.amount],
+          ["Paid to partners", summary.paid.amount],
+        ].map(([label, amount]) => (
           <div className="card p-4" key={label}>
             <dt className="text-xs text-muted">{label}</dt>
             <dd className="mt-1 font-display text-2xl font-extrabold">{money(amount)}</dd>
           </div>
         ))}
       </dl>
-      <h2 className="mt-7 text-xl font-bold">Platform transactions</h2>
+      <h2 className="mt-7 text-xl font-bold">Completed partner legs</h2>
       <div className="mt-3 space-y-3">
-        {ledger.transactions.length === 0 && <div className="card p-6 text-sm text-muted">No wallet or payment entries yet.</div>}
-        {ledger.transactions.map((transaction) => (
-          <article key={transaction._id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
+        {summary.earnings.length === 0 && <div className="card p-6 text-sm text-muted">Partner earnings appear here when a pickup reaches the store or a delivery is confirmed.</div>}
+        {summary.earnings.map((earning) => {
+          const partner = earning.partner;
+          const destination = partner?.partner?.payoutDetails;
+          return (
+          <article key={earning._id} className="card flex flex-wrap items-start justify-between gap-4 p-4">
             <div>
-              <p className="font-semibold">{transaction.description}</p>
-              <p className="mt-1 text-xs capitalize text-muted">{timeOnly(transaction.createdAt)} · {transaction.type.replaceAll("_", " ")}{transaction.order?.orderNumber ? ` · ${transaction.order.orderNumber}` : ""}</p>
+              <p className="font-semibold">{partner?.name || "Partner"} · {earning.leg} · {earning.order?.orderNumber || "Order"}</p>
+              <p className="mt-1 text-xs text-muted">{partner?.email} · {timeOnly(earning.earnedAt)} · {earning.status === "paid" ? `Paid ${timeOnly(earning.paidAt)} · ${earning.payoutReference}` : "Pending payout"}</p>
+              <p className="mt-2 text-sm">
+                {destination?.method === "upi"
+                  ? `UPI: ${destination.upiId}`
+                  : destination?.method === "bank"
+                    ? `Bank: ${destination.accountHolder}, ${destination.accountNumber} · IFSC ${destination.ifsc}`
+                    : "Partner has not saved payout details"}
+              </p>
+              {earning.status === "pending" && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <input
+                    value={references[earning._id] || ""}
+                    onChange={(event) => setReferences((current) => ({ ...current, [earning._id]: event.target.value }))}
+                    className="input !w-auto min-w-56 flex-1"
+                    placeholder="Bank/UPI transfer reference"
+                    aria-label={`Transfer reference for ${earning.order?.orderNumber || "order"}`}
+                    maxLength={120}
+                  />
+                  <button
+                    onClick={() => markPaid(earning._id)}
+                    disabled={busyId === earning._id || !destination}
+                    className="btn btn-primary btn-sm"
+                  >
+                    {busyId === earning._id ? "Saving…" : "Mark paid"}
+                  </button>
+                </div>
+              )}
             </div>
-            <p className={`font-display text-lg font-bold ${transaction.direction === "credit" ? "text-success" : "text-ink"}`}>
-              {transaction.direction === "credit" ? "+" : "−"}{money(transaction.amount)}
-            </p>
+            <p className="font-display text-lg font-bold">{money(earning.amount)}</p>
+          </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function PendingPaymentsPanel() {
+  const [orders, setOrders] = useState(null);
+  const [notes, setNotes] = useState({});
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  const loadPayments = useCallback(async () => {
+    const { data } = await api.get("/admin/pending-payments");
+    setOrders(data);
+  }, []);
+
+  useEffect(() => {
+    loadPayments().catch((err) => setError(errMsg(err, "Couldn't load submitted payments.")));
+    const socket = getSocket();
+    const refresh = () => loadPayments().catch((err) => setError(errMsg(err, "Couldn't refresh submitted payments.")));
+    const interval = setInterval(refresh, 15000);
+    socket?.on("order:update", refresh);
+    return () => {
+      clearInterval(interval);
+      socket?.off("order:update", refresh);
+    };
+  }, [loadPayments]);
+
+  const review = async (id, decision) => {
+    const note = notes[id]?.trim() || "";
+    if (decision === "rejected" && note.length < 3) {
+      setError("Enter a reason before asking the customer to retry payment.");
+      return;
+    }
+    setError("");
+    setBusyId(id);
+    try {
+      await api.put(`/admin/orders/${id}/payment-review`, { decision, note });
+      await loadPayments();
+    } catch (err) {
+      setError(errMsg(err, "Couldn't review this payment."));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!orders) return <div className="mt-6">{error ? <Alert>{error}</Alert> : <div className="skeleton h-64 rounded-3xl" />}</div>;
+
+  return (
+    <section className="mt-6">
+      <p className="text-sm text-muted">Check the transfer in your UPI/bank account before verifying. Only verified payments become active orders and can be assigned to partners.</p>
+      {error && <div className="mt-4"><Alert>{error}</Alert></div>}
+      <div className="mt-4 space-y-3">
+        {orders.length === 0 && <div className="card p-6 text-sm text-muted">No UPI payments are waiting for review.</div>}
+        {orders.map((order) => (
+          <article key={order._id} className="card p-5">
+            <div className="flex flex-wrap justify-between gap-3">
+              <div>
+                <p className="font-semibold">{order.orderNumber} · {order.customer?.name || "Customer"}</p>
+                <p className="mt-1 text-xs text-muted">{order.customer?.phone} · {timeOnly(order.submittedAt)}</p>
+                <p className="mt-2 text-sm">UPI reference: <b>{order.paymentUtr}</b></p>
+                <p className="mt-1 text-xs text-muted">{itemsSummary(order.items)}</p>
+              </div>
+              <p className="font-display text-lg font-bold">{money(order.totalAmount)}</p>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+              <input
+                value={notes[order._id] || ""}
+                onChange={(event) => setNotes((current) => ({ ...current, [order._id]: event.target.value }))}
+                className="input"
+                placeholder="Reason if rejecting this payment"
+                aria-label={`Rejection reason for ${order.orderNumber}`}
+                maxLength={300}
+              />
+              <button onClick={() => review(order._id, "approved")} disabled={busyId === order._id} className="btn btn-primary btn-sm">
+                {busyId === order._id ? "Saving…" : "Verify payment"}
+              </button>
+              <button onClick={() => review(order._id, "rejected")} disabled={busyId === order._id} className="btn btn-danger btn-sm">
+                Reject
+              </button>
+            </div>
           </article>
         ))}
       </div>
@@ -204,8 +334,85 @@ function WalletLedgerPanel() {
   );
 }
 
+function PaymentSettingsPanel() {
+  const [settings, setSettings] = useState({ upiId: "", qrImageData: "" });
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get("/payments/config")
+      .then(({ data }) => setSettings(data))
+      .catch((err) => setError(errMsg(err, "Couldn't load payment settings.")))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const chooseQr = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError("");
+    setNotice("");
+    if (file.size > 1_000_000) {
+      setError("QR image must be 1 MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setError("Couldn't read that QR image.");
+        return;
+      }
+      setSettings((current) => ({ ...current, qrImageData: reader.result }));
+    };
+    reader.onerror = () => setError("Couldn't read that QR image.");
+    reader.readAsDataURL(file);
+  };
+
+  const save = async (event) => {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setSaving(true);
+    try {
+      const { data } = await api.put("/admin/payment-settings", settings);
+      setSettings(data);
+      setNotice("UPI ID and QR code updated. Customers will use these payment details.");
+    } catch (err) {
+      setError(errMsg(err, "Couldn't save payment settings."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="mt-6 skeleton h-64 rounded-3xl" />;
+
+  return (
+    <form onSubmit={save} className="card mt-6 max-w-2xl space-y-4 p-6">
+      <div>
+        <h2 className="text-lg font-bold">Customer UPI payment details</h2>
+        <p className="mt-1 text-sm text-muted">Only the super admin can update these details. Customers see the QR and UPI ID at checkout.</p>
+      </div>
+      <div>
+        <label htmlFor="merchant-upi" className="label">UPI ID</label>
+        <input id="merchant-upi" className="input" value={settings.upiId} onChange={(event) => setSettings((current) => ({ ...current, upiId: event.target.value }))} placeholder="business@bank" required />
+      </div>
+      <div>
+        <label htmlFor="merchant-qr" className="label">QR image</label>
+        <input id="merchant-qr" className="input" type="file" accept="image/png,image/jpeg,image/webp" onChange={chooseQr} />
+        <p className="mt-1 text-xs text-muted">PNG, JPEG or WebP; maximum 1 MB.</p>
+      </div>
+      {settings.qrImageData && <img src={settings.qrImageData} alt="UPI payment QR preview" className="h-56 w-56 rounded-xl border border-line bg-white object-contain p-2" />}
+      {error && <Alert>{error}</Alert>}
+      {notice && <Alert tone="success">{notice}</Alert>}
+      <button disabled={saving || !settings.qrImageData} className="btn btn-primary">{saving ? "Saving…" : "Save payment details"}</button>
+    </form>
+  );
+}
+
 export default function AdminPage() {
-  const { ready } = useRequireRole(["admin", "super_admin"], "/admin/login");
+  const { user, ready } = useRequireRole(["admin", "super_admin"], "/admin/login");
   const [tab, setTab] = useState("orders");
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState(null);
@@ -282,7 +489,7 @@ export default function AdminPage() {
     ["In store", (S.at_store || 0) + (S.in_progress || 0), "store"],
     ["Ready for delivery", S.ready || 0, "package"],
     ["Delivered today", stats?.deliveredToday || 0, "check"],
-    ["Revenue today", money(stats?.revenueToday || 0), "wallet"],
+    ["Revenue today", money(stats?.revenueToday || 0), "package"],
     ["Partners online", stats?.partnersOnline || 0, "user"],
   ];
 
@@ -306,7 +513,9 @@ export default function AdminPage() {
           ["store", "Store settings"],
           ["partners", `Partners${stats?.partnersPending ? ` (${stats.partnersPending} pending)` : ""}`],
           ["offers", "Offers"],
-          ["wallet", "Wallet ledger"],
+          ["payouts", "Partner payouts"],
+          ["payments", "Payment verification"],
+          ...(user?.role === "super_admin" ? [["payment-settings", "UPI settings"]] : []),
         ].map(([id, label]) => (
           <button
             key={id}
@@ -355,7 +564,9 @@ export default function AdminPage() {
 
       {tab === "store" && <StoreSettings />}
       {tab === "offers" && <OffersPanel />}
-      {tab === "wallet" && <WalletLedgerPanel />}
+      {tab === "payouts" && <PartnerPayoutsPanel />}
+      {tab === "payments" && <PendingPaymentsPanel />}
+      {tab === "payment-settings" && user?.role === "super_admin" && <PaymentSettingsPanel />}
 
       {tab === "partners" && (
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -378,8 +589,6 @@ export default function AdminPage() {
                   <div><dt className="text-xs text-muted">Vehicle</dt><dd className="capitalize">{p.partner?.vehicleType} &middot; {p.partner?.vehicleNumber}</dd></div>
                   <div><dt className="text-xs text-muted">Licence / ID</dt><dd>{p.partner?.licenseNumber}</dd></div>
                   <div><dt className="text-xs text-muted">Tasks done</dt><dd>{p.partner?.completedTasks || 0}</dd></div>
-                  <div><dt className="text-xs text-muted">Earned</dt><dd>{money(p.partner?.earnings || 0)}</dd></div>
-                  <div><dt className="text-xs text-muted">Wallet balance</dt><dd>{money(p.walletBalance || 0)}</dd></div>
                 </dl>
                 <div className="mt-4 flex gap-2 border-t border-line pt-4">
                   {st !== "approved" && <button onClick={() => verify(p._id, "approved")} className="btn btn-primary btn-sm">Approve</button>}

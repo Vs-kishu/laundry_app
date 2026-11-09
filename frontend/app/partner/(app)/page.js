@@ -31,9 +31,11 @@ export default function PartnerPage() {
   const [availabilityReady, setAvailabilityReady] = useState(false);
   const [available, setAvailable] = useState([]);
   const [mine, setMine] = useState({ active: [], history: [] });
+  const [payoutSummary, setPayoutSummary] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [myPos, setMyPos] = useState(null);
   const [gpsError, setGpsError] = useState("");
+  const [gpsBusy, setGpsBusy] = useState(false);
   const [simulate, setSimulate] = useState(false);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState(null);
@@ -61,21 +63,29 @@ export default function PartnerPage() {
     }
   }, [approved]);
 
+  const loadPayoutSummary = useCallback(async () => {
+    const { data } = await api.get("/partner/payout");
+    setPayoutSummary(data);
+  }, []);
+
   useEffect(() => {
     if (!ready || !approved) return;
     loadTasks();
+    loadPayoutSummary().catch((err) => setError(errMsg(err, "Couldn't load your earnings.")));
 
     // Reuse the shared authenticated socket so mounting this page doesn't drop other live listeners.
     const socket = getSocket();
     socket?.on("tasks:changed", loadTasks);
     socket?.on("order:update", loadTasks);
+    socket?.on("partner:earnings", loadPayoutSummary);
     const poll = setInterval(loadTasks, 30000);
     return () => {
       clearInterval(poll);
       socket?.off("tasks:changed", loadTasks);
       socket?.off("order:update", loadTasks);
+      socket?.off("partner:earnings", loadPayoutSummary);
     };
-  }, [ready, approved, loadTasks]);
+  }, [ready, approved, loadTasks, loadPayoutSummary]);
 
   // pending partners: poll for approval
   useEffect(() => {
@@ -100,20 +110,31 @@ export default function PartnerPage() {
   useEffect(() => {
     if (!approved || !online || simulate) return;
     if (!navigator.geolocation) {
+      setMyPos(null);
       setGpsError("This device doesn't support GPS.");
       return;
     }
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        setGpsError("");
-        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude, heading: pos.coords.heading };
-        setMyPos(p);
-        emit(p);
-      },
-      (err) => setGpsError(err.code === 1 ? "Location permission denied - allow it so customers can track you." : "Can't get a GPS fix yet…"),
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
-    );
-    return () => navigator.geolocation.clearWatch(id);
+    const updatePosition = (pos) => {
+      setGpsError("");
+      const p = { lat: pos.coords.latitude, lng: pos.coords.longitude, heading: pos.coords.heading };
+      setMyPos(p);
+      emit(p);
+    };
+    const handleError = (err) => {
+      setMyPos(null);
+      setGpsError(err.code === 1
+        ? "Location permission denied. Allow it in your browser's site settings to continue."
+        : "Can't get a GPS fix yet. Turn on location services and try again.");
+    };
+    const options = { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 };
+    const id = navigator.geolocation.watchPosition(updatePosition, handleError, options);
+    const refresh = window.setInterval(() => {
+      navigator.geolocation.getCurrentPosition(updatePosition, handleError, { ...options, maximumAge: 0 });
+    }, 30000);
+    return () => {
+      navigator.geolocation.clearWatch(id);
+      window.clearInterval(refresh);
+    };
   }, [approved, online, simulate, emit]);
 
   // Dev-only: glide toward the current destination so the whole flow can be tested at a desk.
@@ -149,20 +170,42 @@ export default function PartnerPage() {
   }, [storePt?.lat, storePt?.lng, selected?._id, selected?.pickupLocation?.lat, myPos?.lat, myPos?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- actions ----------
+  const getCurrentLocation = () => new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("This device doesn't support GPS. Enable location services to continue."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => reject(new Error(err.code === 1
+        ? "Location access is blocked. Allow it in your browser's site settings, then try again."
+        : "Couldn't get a GPS fix. Turn on device location services and try again.")),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+    );
+  });
+
+  const enableLocation = async () => {
+    setGpsBusy(true);
+    setGpsError("");
+    try {
+      const location = await getCurrentLocation();
+      setMyPos(location);
+      return location;
+    } catch (err) {
+      setMyPos(null);
+      setGpsError(err.message);
+      throw err;
+    } finally {
+      setGpsBusy(false);
+    }
+  };
+
   const toggleOnline = async () => {
     setError("");
     try {
       let location;
       if (!online) {
-        if (!navigator.geolocation) throw new Error("This device doesn't support GPS. Enable location services to go online.");
-        location = await new Promise((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-            (err) => reject(new Error(err.code === 1 ? "Allow location access in your browser settings to go online." : "Couldn't get a GPS fix. Turn on location services and try again.")),
-            { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
-          );
-        });
-        setMyPos(location);
+        location = await enableLocation();
       }
       const { data } = await api.put("/partner/status", { online: !online, ...(location ? { location } : {}) });
       await refreshUser();
@@ -172,11 +215,15 @@ export default function PartnerPage() {
       }
       loadTasks();
     } catch (err) {
-      setError(errMsg(err));
+      setError(err.message || errMsg(err));
     }
   };
 
   const accept = async (task) => {
+    if (!myPos) {
+      setGpsError("Enable location and wait for a fresh GPS fix before accepting tasks.");
+      return;
+    }
     setBusyId(task.orderId);
     setError("");
     try {
@@ -184,7 +231,27 @@ export default function PartnerPage() {
       setSelectedId(data._id);
       await loadTasks();
     } catch (err) {
-      setError(errMsg(err));
+      const message = errMsg(err);
+      if (err.response?.status === 409 && message.toLowerCase().includes("location")) {
+        setMyPos(null);
+        setGpsError(message);
+      } else {
+        setError(message);
+      }
+      loadTasks();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decline = async (task) => {
+    setBusyId(task.orderId);
+    setError("");
+    try {
+      await api.post(`/partner/tasks/${task.orderId}/decline`, { leg: task.leg });
+      await loadTasks();
+    } catch (err) {
+      setError(errMsg(err, "Couldn't decline this task."));
       loadTasks();
     } finally {
       setBusyId(null);
@@ -193,6 +260,10 @@ export default function PartnerPage() {
 
   const advance = async () => {
     if (!selected || !action) return;
+    if (!myPos) {
+      setGpsError("Enable location and wait for a fresh GPS fix before updating tasks.");
+      return;
+    }
     if (action.needsOtp && !/^\d{4}$/.test(otp)) return setError("Enter the customer's 4-digit OTP.");
     setBusyId(selected._id);
     setError("");
@@ -201,7 +272,13 @@ export default function PartnerPage() {
       setOtp("");
       await Promise.all([loadTasks(), refreshUser()]);
     } catch (err) {
-      setError(errMsg(err));
+      const message = errMsg(err);
+      if (err.response?.status === 409 && message.toLowerCase().includes("location")) {
+        setMyPos(null);
+        setGpsError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setBusyId(null);
     }
@@ -267,7 +344,7 @@ export default function PartnerPage() {
           <dl className="mt-6 grid grid-cols-3 gap-3">
             {[
               ["Tasks done", user.partner.completedTasks],
-              ["Earnings", money(user.partner.earnings)],
+              ["Pending payout", payoutSummary ? money(payoutSummary.pending.amount) : "—"],
               ["Active now", mine.active.length],
             ].map(([k, v]) => (
               <div key={k} className="card p-4 text-center">
@@ -278,11 +355,26 @@ export default function PartnerPage() {
           </dl>
 
           {error && <div className="mt-5"><Alert>{error}</Alert></div>}
-          {online && gpsError && <div className="mt-5"><Alert tone="warn">{gpsError}</Alert></div>}
+          {online && !myPos && (
+            <div className="mt-5 space-y-3">
+              <Alert tone="warn">{gpsError || "Enable location to accept or update tasks. Your live GPS fix is required."}</Alert>
+              <button onClick={enableLocation} disabled={gpsBusy} className="btn btn-primary">
+                <Icon name="locate" className="h-4 w-4" /> {gpsBusy ? "Getting location…" : "Enable location to continue"}
+              </button>
+            </div>
+          )}
 
           {!online && (
             <div className="mt-6">
-              <EmptyState icon="bike" title="You're offline">
+              <EmptyState
+                icon="bike"
+                title="You're offline"
+                action={
+                  <button onClick={toggleOnline} disabled={gpsBusy} className="btn btn-primary">
+                    <Icon name="locate" className="h-4 w-4" /> {gpsBusy ? "Getting location…" : "Enable location and go online"}
+                  </button>
+                }
+              >
                 Go online to see nearby pickups and deliveries. Your live location is shared with customers only while you have an active task.
               </EmptyState>
             </div>
@@ -347,7 +439,7 @@ export default function PartnerPage() {
                             {selected.notes && <p className="rounded-xl bg-soft px-3 py-2 text-muted">&ldquo;{selected.notes}&rdquo;</p>}
                             <p className="text-xs text-muted">{selected.items.map((i) => `${i.serviceName} × ${i.quantity}${i.unit}`).join(", ")}</p>
                             {selected.status === "out_for_delivery" && (
-                              <p className="rounded-xl bg-success/10 px-3 py-2 font-semibold">Payment: {selected.paymentStatus === "refunded" ? "Refunded to wallet" : selected.paymentMethod === "wallet" ? "Paid from wallet" : selected.paymentStatus === "paid" ? "Paid online" : "Not paid"}</p>
+                              <p className="rounded-xl bg-success/10 px-3 py-2 font-semibold">Payment: {selected.paymentStatus === "refunded" ? "Refunded" : selected.paymentStatus === "paid" ? "Paid" : "Not paid"}</p>
                             )}
                           </div>
 
@@ -372,7 +464,7 @@ export default function PartnerPage() {
                                 className="input mb-3 text-center font-display text-2xl font-extrabold tracking-[0.5em] sm:max-w-[14rem]"
                               />
                             )}
-                            <button onClick={advance} disabled={busyId === selected._id} className="btn btn-primary w-full py-3.5 text-base">
+                            <button onClick={advance} disabled={busyId === selected._id || !myPos} className="btn btn-primary w-full py-3.5 text-base">
                               {busyId === selected._id ? "Updating…" : action.label}
                             </button>
                           </div>
@@ -405,15 +497,23 @@ export default function PartnerPage() {
                             <span className={`chip ${t.leg === "pickup" ? "bg-brand/15 text-link" : "bg-aqua/20 text-ink"}`}>{t.leg === "pickup" ? "Pickup" : "Delivery"}</span>
                             {t.express && <span className="chip bg-sun/30 text-ink"><Icon name="bolt" className="h-3 w-3" /> Express</span>}
                           </div>
-                          <span className="font-display text-lg font-extrabold text-success">{money(t.payout)}</span>
+                          <span className="text-right">
+                            <span className="block font-display text-lg font-extrabold text-success">{money(t.payout)}</span>
+                            <span className="text-xs text-muted">per completed leg</span>
+                          </span>
                         </div>
                         <p className="mt-3 line-clamp-2 text-sm">{t.address}</p>
                         <p className="mt-1 text-xs text-muted">
-                          {t.toFirstStopKm != null ? `${t.toFirstStopKm} km to first stop · ` : ""}{t.tripKm} km trip &middot; {t.itemCount} item type{t.itemCount > 1 ? "s" : ""}
+                          {t.toFirstStopKm} km to {t.leg === "pickup" ? "customer pickup" : "store pickup"} · within {t.rangeKm} km range &middot; {t.tripKm} km trip &middot; {t.itemCount} item type{t.itemCount > 1 ? "s" : ""}
                         </p>
-                        <button onClick={() => accept(t)} disabled={busyId === t.orderId} className="btn btn-primary mt-4 w-full">
-                          {busyId === t.orderId ? "Accepting…" : "Accept task"}
-                        </button>
+                        <div className="mt-4 flex gap-2">
+                          <button onClick={() => accept(t)} disabled={busyId === t.orderId || !myPos} className="btn btn-primary flex-1">
+                            {busyId === t.orderId ? "Working…" : "Accept"}
+                          </button>
+                          <button onClick={() => decline(t)} disabled={busyId === t.orderId} className="btn btn-secondary flex-1">
+                            Decline
+                          </button>
+                        </div>
                       </article>
                     ))}
                   </div>

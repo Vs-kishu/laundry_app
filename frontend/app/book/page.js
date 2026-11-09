@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import api, { errMsg } from "../../lib/api";
 import { useRequireRole } from "../../context/AuthContext";
 import useStoreConfig from "../../hooks/useStoreConfig";
@@ -56,8 +55,6 @@ export default function BookPage() {
   const [offerError, setOfferError] = useState("");
   const [offerBusy, setOfferBusy] = useState(false);
   const [availableOffers, setAvailableOffers] = useState([]);
-  const [walletBalance, setWalletBalance] = useState(0);
-  const [useWallet, setUseWallet] = useState(false);
 
   useEffect(() => {
     if (user?.address) setAddress((a) => a || user.address);
@@ -72,7 +69,6 @@ export default function BookPage() {
         setError(errMsg(err, "Couldn't load services. Please refresh the page."));
       });
     api.get("/offers").then(({ data }) => setAvailableOffers(data)).catch((err) => setOfferError(errMsg(err, "Couldn't load current offers.")));
-      api.get("/wallet").then(({ data }) => setWalletBalance(data.balance)).catch(() => {});
   }, []);
 
   const slots = useMemo(() => {
@@ -106,9 +102,6 @@ export default function BookPage() {
   const deliveryFee = !selected.length || !fees ? 0 : subtotal >= fees.freeDeliveryAbove ? 0 : fees.delivery;
   const expressFee = pickupType === "express" && selected.length && fees ? fees.express : 0;
   const total = subtotal - (currentOffer?.discountAmount || 0) + deliveryFee + expressFee;
-  useEffect(() => {
-    if (walletBalance < total) setUseWallet(false);
-  }, [walletBalance, total]);
 
   const distanceKm = location && config?.store ? haversineKm(config.store.location, location) : null;
   const outOfArea = distanceKm != null && distanceKm > config.store.serviceRadiusKm;
@@ -149,61 +142,16 @@ export default function BookPage() {
 
     setSubmitting(true);
     try {
-      const { data: checkout } = await api.post("/orders", {
+      const { data: order } = await api.post("/orders", {
         items: selected.map((s) => ({ serviceId: s._id, quantity: quantities[s._id] })),
         pickupAddress: address.trim(),
         pickupLocation: location,
         pickupType,
-        useWallet,
         couponCode: currentOffer?.offer?.code || "",
         ...(pickupType === "scheduled" ? { pickupDate, pickupSlot } : {}),
         notes,
       });
-      if (checkout.paidByWallet) {
-        router.push(`/orders/${checkout.order._id}`);
-        return;
-      }
-      if (!checkout.keyId) {
-        throw new Error("Razorpay key ID is missing from the backend response. Set RAZORPAY_KEY_ID on the backend and restart or redeploy the API.");
-      }
-      const loaded = await new Promise((resolve) => {
-        if (window.Razorpay) return resolve(true);
-        const script = document.createElement("script");
-        script.src = "https://checkout.razorpay.com/v1/checkout.js";
-        script.onload = () => resolve(true);
-        script.onerror = () => resolve(false);
-        document.body.appendChild(script);
-      });
-      if (!loaded) throw new Error("Could not load the secure payment form. Check your connection and try again.");
-      await new Promise((resolve) => {
-        const payment = new window.Razorpay({
-          key: checkout.keyId,
-          amount: checkout.amount,
-          currency: checkout.currency,
-          name: checkout.name,
-          description: checkout.description,
-          order_id: checkout.orderId,
-          prefill: checkout.prefill,
-          method: { upi: true },
-          theme: { color: "#2F6BFF" },
-          handler: async (response) => {
-            try {
-              const { data: order } = await api.post("/orders/payment/verify", response);
-              router.push(`/orders/${order._id}`);
-              resolve();
-            } catch (err) {
-              setError(errMsg(err, "Payment verification failed. Contact support before paying again."));
-              resolve();
-            }
-          },
-          modal: { ondismiss: () => { setError("Payment checkout closed. Your order is not confirmed."); resolve(); } },
-        });
-        payment.on("payment.failed", (response) => {
-          setError(response.error?.description || "Payment failed. Please try again.");
-          resolve();
-        });
-        payment.open();
-      });
+      router.push(`/orders/${order._id}`);
     } catch (err) {
       setError(errMsg(err, "Couldn't place your order. Please try again."));
     } finally {
@@ -237,18 +185,6 @@ export default function BookPage() {
               <span>-{money(currentOffer.discountAmount)}</span>
             </li>
           )}
-          {selected.length > 0 && (
-            <li className="border-t border-line pt-3">
-              {walletBalance >= total ? (
-                <label className="flex cursor-pointer items-start gap-3">
-                  <input type="checkbox" checked={useWallet} onChange={(event) => setUseWallet(event.target.checked)} />
-                  <span><b>Pay with wallet</b><span className="block text-xs text-muted">Available: {money(walletBalance)}</span></span>
-                </label>
-              ) : (
-                <p className="text-xs text-muted">Wallet balance: {money(walletBalance)} — <Link className="text-link underline" href="/wallet">Add funds</Link>. Wallet payment requires the full order amount.</p>
-              )}
-            </li>
-          )}
           {expressFee > 0 && (
             <li className="flex justify-between text-muted">
               <span>Express pickup</span>
@@ -278,7 +214,7 @@ export default function BookPage() {
       {fees && selected.length > 0 && deliveryFee > 0 && (
         <p className="mt-2 text-xs text-muted">Add {money(fees.freeDeliveryAbove - subtotal)} more for free delivery.</p>
       )}
-      <p className="mt-2 text-xs text-muted">Pay securely online. Choose UPI QR in Razorpay checkout when it is available for your payment.</p>
+      <p className="mt-2 text-xs text-muted">Pay using the UPI QR or ID configured by the super admin. Your order begins after payment is verified.</p>
       {outOfArea && (
         <div className="mt-4">
           <Alert tone="warn">
@@ -436,8 +372,8 @@ export default function BookPage() {
           <h2 className="mb-4 text-lg font-bold">Order summary</h2>
           {SummaryBody}
           {error && <div className="mt-4"><Alert>{error}</Alert></div>}
-          <button type="submit" disabled={submitting || outOfArea} className="btn btn-primary mt-5 w-full py-3.5 text-base">
-            {submitting ? "Opening secure checkout…" : `Pay ${money(total)} and confirm`}
+          <button type="submit" disabled={submitting || outOfArea || !gpsGranted || !location} className="btn btn-primary mt-5 w-full py-3.5 text-base">
+            {submitting ? "Creating order…" : `Continue to pay ${money(total)}`}
           </button>
         </aside>
 
@@ -450,8 +386,8 @@ export default function BookPage() {
           {error && <Alert>{error}</Alert>}
         </div>
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-bg/95 p-3 backdrop-blur lg:hidden">
-          <button type="submit" disabled={submitting || outOfArea} className="btn btn-primary w-full py-3.5 text-base">
-            {submitting ? "Opening checkout…" : `Pay ${money(total)} and confirm`}
+          <button type="submit" disabled={submitting || outOfArea || !gpsGranted || !location} className="btn btn-primary w-full py-3.5 text-base">
+            {submitting ? "Creating order…" : `Continue to pay ${money(total)}`}
           </button>
         </div>
       </form>

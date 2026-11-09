@@ -1,141 +1,153 @@
 import { useCallback, useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { WebView } from "react-native-webview";
 import { useAuth } from "../AuthContext";
 import api, { errMsg } from "../api";
-import { Alert, Button, Card, H1, Muted } from "../components/ui";
+import { Alert, Button, Card, H1, H2, Muted } from "../components/ui";
 import { API_URL } from "../config";
-import { colors, money, radius } from "../theme";
+import { colors, money, radius, timeOnly } from "../theme";
+
+const EMPTY_DETAILS = { method: "upi", upiId: "", accountHolder: "", accountNumber: "", ifsc: "" };
 
 export default function AccountScreen() {
-  const { user, logout, refreshUser } = useAuth();
-  const [wallet, setWallet] = useState(null);
-  const [amount, setAmount] = useState("500");
-  const [checkout, setCheckout] = useState(null);
+  const { user, logout } = useAuth();
+  const [summary, setSummary] = useState(null);
+  const [details, setDetails] = useState(EMPTY_DETAILS);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const loadWallet = useCallback(async () => {
-    const { data } = await api.get("/wallet");
-    setWallet(data);
+  const loadSummary = useCallback(async () => {
+    const { data } = await api.get("/partner/payout");
+    setSummary(data);
+    if (data.payoutDetails) setDetails({ ...EMPTY_DETAILS, ...data.payoutDetails });
   }, []);
-  useEffect(() => {
-    if (user?.role === "customer" || user?.role === "partner") loadWallet().catch((e) => setError(errMsg(e)));
-  }, [user?.role, loadWallet]);
 
-  const startTopUp = async () => {
+  useEffect(() => {
+    if (user.role === "partner") loadSummary().catch((e) => setError(errMsg(e)));
+  }, [user.role, loadSummary]);
+
+  const saveDetails = async () => {
     setBusy(true);
     setError("");
+    setNotice("");
+    const payload = details.method === "upi"
+      ? { method: "upi", upiId: details.upiId }
+      : { method: "bank", accountHolder: details.accountHolder, accountNumber: details.accountNumber, ifsc: details.ifsc };
     try {
-      const { data } = await api.post("/wallet/topups", { amount: Math.round(Number(amount) * 100) });
-      if (!data.keyId) {
-        throw new Error("Razorpay key ID is missing from the backend response. Set RAZORPAY_KEY_ID on the backend and restart or redeploy the API.");
-      }
-      setCheckout(data);
+      const { data } = await api.put("/partner/payout-details", payload);
+      setDetails({ ...EMPTY_DETAILS, ...data.payoutDetails });
+      setNotice("Payout details saved.");
+      await loadSummary();
     } catch (e) {
-      setError(errMsg(e, "Could not start wallet top-up."));
+      setError(errMsg(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const onPaymentMessage = async (event) => {
-    let message;
-    try {
-      message = JSON.parse(event.nativeEvent.data);
-    } catch {
-      setError("Could not read the payment response. Please refresh your wallet.");
-      setCheckout(null);
-      return;
-    }
-    if (message.type === "dismissed") return setCheckout(null);
-    if (message.type === "failed") {
-      setError(message.message || "Payment failed. Please try again.");
-      setCheckout(null);
-      return;
-    }
-    if (message.type === "success") {
-      try {
-        await api.post("/wallet/topups/verify", message.response);
-        await Promise.all([loadWallet(), refreshUser()]);
-        setCheckout(null);
-      } catch (e) {
-        setError(errMsg(e, "Payment verification failed. Refresh your wallet before retrying."));
-        setCheckout(null);
-      }
-    }
+  const inputStyle = {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.ink,
+    backgroundColor: colors.surface,
+    marginTop: 6,
   };
 
-  const paymentPage = checkout ? `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>Opening secure payment…</p><script src="https://checkout.razorpay.com/v1/checkout.js"></script><script>const options=${JSON.stringify({
-    key: checkout.keyId,
-    amount: checkout.amount,
-    currency: checkout.currency,
-    name: checkout.name,
-    description: checkout.description,
-    order_id: checkout.orderId,
-    prefill: checkout.prefill,
-    method: { upi: true },
-  }).replace(/</g, "\\u003c")};options.handler=response=>window.ReactNativeWebView.postMessage(JSON.stringify({type:"success",response}));options.modal={ondismiss:()=>window.ReactNativeWebView.postMessage(JSON.stringify({type:"dismissed"}))};const rzp=new Razorpay(options);rzp.on("payment.failed",e=>window.ReactNativeWebView.postMessage(JSON.stringify({type:"failed",message:e.error.description})));rzp.open();</script></body></html>` : "";
-  const rows = [
-    ["Name", user.name],
-    ["Email", user.email],
-    ["Mobile", user.phone],
-    ...(user.role === "partner" ? [["Vehicle", `${user.partner?.vehicleType || ""} ${user.partner?.vehicleNumber || ""}`]] : []),
-  ];
   return (
     <SafeAreaView edges={["top"]} style={{ flex: 1, backgroundColor: colors.bg, padding: 16 }}>
       <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
-      <H1 style={{ marginBottom: 16 }}>Account</H1>
-      <Card style={{ marginBottom: 16 }}>
-        <View style={{ alignItems: "center", marginBottom: 14 }}>
-          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: "#fff", fontSize: 26, fontWeight: "800" }}>{user.name[0]}</Text>
-          </View>
-          <Text style={{ fontWeight: "800", fontSize: 18, color: colors.ink, marginTop: 8 }}>{user.name}</Text>
-          <Muted style={{ textTransform: "capitalize" }}>{user.role}</Muted>
-        </View>
-        {rows.map(([k, v]) => (
-          <View key={k} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.line }}>
-            <Muted>{k}</Muted>
-            <Text style={{ color: colors.ink, fontWeight: "600", textTransform: k === "Vehicle" ? "capitalize" : "none" }}>{v}</Text>
-          </View>
-        ))}
-      </Card>
-      {(user.role === "customer" || user.role === "partner") && (
+        <H1 style={{ marginBottom: 16 }}>Account</H1>
         <Card style={{ marginBottom: 16 }}>
-          <Text style={{ color: colors.ink, fontWeight: "800", fontSize: 18 }}>Wallet</Text>
-          <Text style={{ color: colors.ink, fontWeight: "800", fontSize: 28, marginTop: 6 }}>{money(wallet?.balance ?? user.walletBalance ?? 0)}</Text>
-          {user.role === "partner" ? (
-            <Muted style={{ marginTop: 4 }}>Partner earnings are credited immediately after a task leg is completed. Withdrawals are not enabled yet.</Muted>
-          ) : (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 }}>
-              <TextInput value={amount} onChangeText={setAmount} keyboardType="number-pad" placeholder="Amount in rupees" style={{ flex: 1, borderWidth: 1, borderColor: colors.line, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, color: colors.ink }} />
-              <Button title={busy ? "Starting…" : "Add funds"} small onPress={startTopUp} loading={busy} disabled={Number(amount) < 1 || Number(amount) > 5000} />
+          <View style={{ alignItems: "center", marginBottom: 14 }}>
+            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ color: "#fff", fontSize: 26, fontWeight: "800" }}>{user.name[0]}</Text>
             </View>
-          )}
-          {error ? <View style={{ marginTop: 10 }}><Alert>{error}</Alert></View> : null}
-          <Muted style={{ marginTop: 8 }}>UPI QR may be selected in the secure Razorpay checkout when available.</Muted>
-          {wallet?.transactions?.slice(0, 5).map((transaction) => (
-            <View key={transaction._id} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.line, marginTop: 8 }}>
-              <Muted>{transaction.description}</Muted>
-              <Text style={{ color: transaction.direction === "credit" ? colors.success : colors.ink, fontWeight: "700" }}>{transaction.direction === "credit" ? "+" : "−"}{money(transaction.amount)}</Text>
+            <Text style={{ fontWeight: "800", fontSize: 18, color: colors.ink, marginTop: 8 }}>{user.name}</Text>
+            <Muted style={{ textTransform: "capitalize" }}>{user.role}</Muted>
+          </View>
+          {[
+            ["Name", user.name],
+            ["Email", user.email],
+            ["Mobile", user.phone],
+            ...(user.role === "partner" ? [["Vehicle", `${user.partner?.vehicleType || ""} ${user.partner?.vehicleNumber || ""}`]] : []),
+          ].map(([label, value]) => (
+            <View key={label} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.line }}>
+              <Muted>{label}</Muted>
+              <Text style={{ color: colors.ink, fontWeight: "600" }}>{value}</Text>
             </View>
           ))}
         </Card>
-      )}
-      <Button title="Log out" variant="danger" icon="log-out" onPress={logout} />
-      <Muted style={{ textAlign: "center", marginTop: 20 }}>Server: {API_URL}</Muted>
+
+        {user.role === "partner" && (
+          <>
+            <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
+              {[
+                ["Pending payout", summary?.pending?.amount || 0],
+                ["Paid", summary?.paid?.amount || 0],
+              ].map(([label, amount]) => (
+                <Card key={label} style={{ flex: 1, padding: 14 }}>
+                  <Muted>{label}</Muted>
+                  <Text style={{ color: colors.ink, fontSize: 22, fontWeight: "800", marginTop: 4 }}>{money(amount)}</Text>
+                </Card>
+              ))}
+            </View>
+
+            <Card style={{ marginBottom: 16 }}>
+              <H2>Payout method</H2>
+              <Muted style={{ marginTop: 4 }}>Earn 10% of the final order total per completed leg. The admin pays these earnings manually to your UPI or bank account.</Muted>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
+                <Button title="UPI ID" small variant={details.method === "upi" ? "primary" : "secondary"} onPress={() => setDetails((current) => ({ ...current, method: "upi" }))} />
+                <Button title="Bank account" small variant={details.method === "bank" ? "primary" : "secondary"} onPress={() => setDetails((current) => ({ ...current, method: "bank" }))} />
+              </View>
+              {details.method === "upi" ? (
+                <>
+                  <Muted style={{ marginTop: 14 }}>UPI ID</Muted>
+                  <TextInput value={details.upiId} onChangeText={(upiId) => setDetails({ ...details, upiId })} autoCapitalize="none" autoCorrect={false} placeholder="name@bank" placeholderTextColor="#9AA6C3" style={inputStyle} />
+                </>
+              ) : (
+                <>
+                  <Muted style={{ marginTop: 14 }}>Account holder name</Muted>
+                  <TextInput value={details.accountHolder} onChangeText={(accountHolder) => setDetails({ ...details, accountHolder })} autoCapitalize="words" placeholder="Name on bank account" placeholderTextColor="#9AA6C3" style={inputStyle} />
+                  <Muted style={{ marginTop: 10 }}>Account number</Muted>
+                  <TextInput value={details.accountNumber} onChangeText={(accountNumber) => setDetails({ ...details, accountNumber: accountNumber.replace(/\D/g, "").slice(0, 20) })} keyboardType="number-pad" placeholder="8–20 digits" placeholderTextColor="#9AA6C3" style={inputStyle} />
+                  <Muted style={{ marginTop: 10 }}>IFSC code</Muted>
+                  <TextInput value={details.ifsc} onChangeText={(ifsc) => setDetails({ ...details, ifsc: ifsc.toUpperCase() })} autoCapitalize="characters" autoCorrect={false} maxLength={11} placeholder="ABCD0123456" placeholderTextColor="#9AA6C3" style={inputStyle} />
+                </>
+              )}
+              {summary?.payoutDetails?.method === "upi" && (
+                <Muted style={{ marginTop: 10 }}>Saved UPI ID: {summary.payoutDetails.upiId}</Muted>
+              )}
+              {summary?.payoutDetails?.method === "bank" && (
+                <Muted style={{ marginTop: 10 }}>
+                  Saved account ending {summary.payoutDetails.accountNumber?.slice(-4) || "—"} · {summary.payoutDetails.ifsc}
+                </Muted>
+              )}
+              {error ? <Alert>{error}</Alert> : null}
+              {notice ? <Alert tone="success">{notice}</Alert> : null}
+              <Button title={busy ? "Saving…" : "Save payout details"} onPress={saveDetails} loading={busy} style={{ marginTop: 14 }} />
+            </Card>
+
+            <H2 style={{ marginBottom: 10 }}>Earning history</H2>
+            {summary?.earnings?.length === 0 && <Card><Muted>No completed task earnings yet.</Muted></Card>}
+            {summary?.earnings?.map((earning) => (
+              <Card key={earning._id} style={{ marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.ink, fontWeight: "700" }}>{earning.order?.orderNumber || "Order"} · {earning.leg} leg</Text>
+                  <Muted style={{ marginTop: 4 }}>{timeOnly(earning.earnedAt)} · {earning.status === "paid" ? `Paid · ${earning.payoutReference}` : "Pending admin payout"}</Muted>
+                </View>
+                <Text style={{ color: colors.ink, fontWeight: "800" }}>{money(earning.amount)}</Text>
+              </Card>
+            ))}
+          </>
+        )}
+
+        <Button title="Log out" variant="danger" icon="log-out" onPress={logout} />
+        <Muted style={{ textAlign: "center", marginTop: 20 }}>Server: {API_URL}</Muted>
       </ScrollView>
-      <Modal visible={!!checkout} animationType="slide" onRequestClose={() => setCheckout(null)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12 }}>
-            <Text style={{ color: colors.ink, fontWeight: "800", fontSize: 17 }}>Secure wallet top-up</Text>
-            <Pressable onPress={() => setCheckout(null)} accessibilityLabel="Close payment"><Text style={{ color: colors.ink, fontSize: 26 }}>×</Text></Pressable>
-          </View>
-          {checkout ? <WebView source={{ html: paymentPage }} onMessage={onPaymentMessage} javaScriptEnabled domStorageEnabled /> : null}
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 }

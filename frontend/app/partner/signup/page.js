@@ -55,7 +55,7 @@ export default function PartnerSignupPage() {
         points: [
           ["bolt", "Accept nearby pickups and deliveries"],
           ["nav", "One-tap navigation to every stop"],
-          ["wallet", "Earn for every completed task"],
+          ["wallet", "Earn 10% of the order total for each completed leg"],
         ],
       }}
       footer={

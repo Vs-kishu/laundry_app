@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, Text, TextInput, View } from "react-native";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import LeafletMap from "./LeafletMap";
@@ -14,6 +14,8 @@ export default function LocationPicker({ value, onChange, store, onGpsChange }) 
   const [searching, setSearching] = useState(false);
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState("");
+  const [canOpenSettings, setCanOpenSettings] = useState(false);
+  const [gpsGranted, setGpsGranted] = useState(false);
   const skip = useRef(false);
 
   const markers = useMemo(() => {
@@ -54,16 +56,28 @@ export default function LocationPicker({ value, onChange, store, onGpsChange }) 
   const useMyLocation = async () => {
     setGeoError("");
     setLocating(true);
+    setGpsGranted(false);
     onGpsChange?.(false);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") throw new Error("denied");
+      const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        setCanOpenSettings(!canAskAgain);
+        throw new Error("permission");
+      }
+      setCanOpenSettings(false);
+      if (!(await Location.hasServicesEnabledAsync())) throw new Error("services");
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      setGpsGranted(true);
       onGpsChange?.(true);
       pick({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-    } catch {
+    } catch (error) {
+      setGpsGranted(false);
       onGpsChange?.(false);
-      setGeoError("Couldn't get your location. Allow location access in Settings and try again.");
+      setGeoError(error.message === "permission"
+        ? "Location access is required to place an order. Allow it in Settings and try again."
+        : error.message === "services"
+          ? "Turn on device location services and try again."
+          : "Couldn't get your location. Check location access and try again.");
     }
     setLocating(false);
   };
@@ -103,9 +117,10 @@ export default function LocationPicker({ value, onChange, store, onGpsChange }) 
       )}
 
       <View style={{ flexDirection: "row", marginTop: 10 }}>
-        <Button title={locating ? "Locating…" : "Use my current location"} icon="locate" variant="secondary" small onPress={useMyLocation} disabled={locating} />
+        <Button title={locating ? "Locating…" : gpsGranted ? "Refresh current location" : "Enable location to continue"} icon="locate" variant="secondary" small onPress={useMyLocation} disabled={locating} />
       </View>
       {geoError ? <Text style={{ color: colors.danger, fontSize: 12, marginTop: 6 }}>{geoError}</Text> : null}
+      {canOpenSettings && <Button title="Open app settings" icon="settings" variant="secondary" small onPress={() => Linking.openSettings()} style={{ alignSelf: "flex-start", marginTop: 8 }} />}
 
       <View style={{ height: 260, marginTop: 12 }}>
         <LeafletMap

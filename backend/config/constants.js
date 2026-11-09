@@ -14,7 +14,7 @@ module.exports = {
   FREE_DELIVERY_ABOVE: num(process.env.FREE_DELIVERY_ABOVE, 299),
   EXPRESS_FEE: num(process.env.EXPRESS_FEE, 39),
   EXPRESS_ETA_MINUTES: num(process.env.EXPRESS_ETA_MINUTES, 45),
-  PARTNER_PAYOUT_PER_TASK: num(process.env.PARTNER_PAYOUT_PER_TASK, 30),
+  PARTNER_EARNING_PERCENT: 10,
   MAX_ACTIVE_TASKS_PER_PARTNER: num(process.env.MAX_ACTIVE_TASKS_PER_PARTNER, 3),
   // Fallback used only until an admin/seed creates the Store document.
   DEFAULT_STORE: {

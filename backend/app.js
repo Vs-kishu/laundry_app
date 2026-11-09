@@ -19,12 +19,7 @@ app.use(
   })
 );
 app.use(compression());
-app.use(express.json({
-  limit: "20kb",
-  verify: (req, _res, buffer) => {
-    if (req.originalUrl === "/api/orders/payment/webhook") req.rawBody = Buffer.from(buffer);
-  },
-}));
+app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (req, res) => {
   const dbUp = mongoose.connection.readyState === 1;
@@ -36,8 +31,8 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/services", require("./routes/serviceRoutes"));
 app.use("/api/offers", require("./routes/offerRoutes"));
 app.use("/api/store", require("./routes/storeRoutes"));
+app.use("/api/payments", require("./routes/paymentRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
-app.use("/api/wallet", require("./routes/walletRoutes"));
 app.use("/api/partner", require("./routes/partnerRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 

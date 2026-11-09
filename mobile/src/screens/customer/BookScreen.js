@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { WebView } from "react-native-webview";
 import api, { errMsg } from "../../api";
 import { useAuth } from "../../AuthContext";
 import { useStoreConfig } from "../../hooks";
@@ -12,20 +11,6 @@ import { Alert, Button, Card, Chip, Field, H2, Muted } from "../../components/ui
 import { colors, money, radius } from "../../theme";
 
 const ICON = { wash_fold: "water", wash_iron: "shirt", dry_clean: "sparkles", iron_only: "flame" };
-
-const paymentPage = (checkout) => {
-  const options = JSON.stringify({
-    key: checkout.keyId,
-    amount: checkout.amount,
-    currency: checkout.currency,
-    name: checkout.name,
-    description: checkout.description,
-    order_id: checkout.orderId,
-    prefill: checkout.prefill,
-    method: { upi: true },
-  }).replace(/</g, "\\u003c");
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>Opening secure payment…</p><script src="https://checkout.razorpay.com/v1/checkout.js"></script><script>const options=${options};options.handler=response=>window.ReactNativeWebView.postMessage(JSON.stringify({type:"success",response}));options.modal={ondismiss:()=>window.ReactNativeWebView.postMessage(JSON.stringify({type:"dismissed"}))};const rzp=new Razorpay(options);rzp.on("payment.failed",e=>window.ReactNativeWebView.postMessage(JSON.stringify({type:"failed",message:e.error.description})));rzp.open();</script></body></html>`;
-};
 
 const isoDay = (offset) => {
   const d = new Date();
@@ -75,14 +60,10 @@ export default function BookScreen({ navigation }) {
   const [offerError, setOfferError] = useState("");
   const [offerBusy, setOfferBusy] = useState(false);
   const [availableOffers, setAvailableOffers] = useState([]);
-  const [checkout, setCheckout] = useState(null);
-  const [walletBalance, setWalletBalance] = useState(0);
-  const [useWallet, setUseWallet] = useState(false);
 
   useEffect(() => {
     api.get("/services").then(({ data }) => setServices(data)).catch((e) => { setServices([]); setError(errMsg(e)); });
     api.get("/offers").then(({ data }) => setAvailableOffers(data)).catch((e) => setOfferError(errMsg(e, "Couldn't load current offers.")));
-    api.get("/wallet").then(({ data }) => setWalletBalance(data.balance)).catch(() => {});
   }, []);
 
   const slots = useMemo(() => {
@@ -105,9 +86,6 @@ export default function BookScreen({ navigation }) {
   const deliveryFee = !selected.length || !fees ? 0 : subtotal >= fees.freeDeliveryAbove ? 0 : fees.delivery;
   const expressFee = type === "express" && selected.length && fees ? fees.express : 0;
   const total = subtotal - (currentOffer?.discountAmount || 0) + deliveryFee + expressFee;
-  useEffect(() => {
-    if (walletBalance < total) setUseWallet(false);
-  }, [walletBalance, total]);
 
   const distanceKm = location && config?.store ? haversineKm(config.store.location, location) : null;
   const outOfArea = distanceKm != null && distanceKm > config.store.serviceRadiusKm;
@@ -146,53 +124,15 @@ export default function BookScreen({ navigation }) {
         pickupAddress: address.trim(),
         pickupLocation: location,
         pickupType: type,
-        useWallet,
         couponCode: currentOffer?.offer?.code || "",
         ...(type === "scheduled" ? { pickupDate: isoDay(dayOffset), pickupSlot: slot } : {}),
         notes,
       });
-      if (data.paidByWallet) {
-        navigation.replace("Tracking", { id: data.order._id });
-        return;
-      }
-      if (!data.keyId) {
-        throw new Error("Razorpay key ID is missing from the backend response. Set RAZORPAY_KEY_ID on the backend and restart or redeploy the API.");
-      }
-      setCheckout(data);
-      setSubmitting(false);
+      navigation.replace("Tracking", { id: data._id });
     } catch (e) {
       setError(errMsg(e, "Couldn't place your order."));
+    } finally {
       setSubmitting(false);
-    }
-  };
-
-  const onPaymentMessage = async (event) => {
-    let message;
-    try {
-      message = JSON.parse(event.nativeEvent.data);
-    } catch {
-      setError("Could not read the payment response. Please retry checkout.");
-      setCheckout(null);
-      return;
-    }
-    if (message.type === "dismissed") {
-      setCheckout(null);
-      return;
-    }
-    if (message.type === "failed") {
-      setError(message.message || "Payment failed. Please try again.");
-      setCheckout(null);
-      return;
-    }
-    if (message.type === "success") {
-      try {
-        const { data: order } = await api.post("/orders/payment/verify", message.response);
-        setCheckout(null);
-        navigation.replace("Tracking", { id: order._id });
-      } catch (e) {
-        setError(errMsg(e, "Payment verification failed. Contact support before paying again."));
-        setCheckout(null);
-      }
     }
   };
 
@@ -322,40 +262,20 @@ export default function BookScreen({ navigation }) {
               <Text style={{ color: colors.ink, fontWeight: "800", marginBottom: 4 }}>Current offers</Text>
               {availableOffers.map((offer) => <Text key={offer._id} style={{ color: colors.muted, fontSize: 12, marginTop: 2 }}>{offer.code} — {offer.title}</Text>)}
             </View>}
-            {selected.length > 0 && (
-              walletBalance >= total ? (
-                <Pressable onPress={() => setUseWallet((value) => !value)} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12, padding: 10, borderRadius: radius.md, backgroundColor: colors.soft }}>
-                  <Ionicons name={useWallet ? "checkbox" : "square-outline"} size={21} color={colors.brand} />
-                  <View><Text style={{ color: colors.ink, fontWeight: "700" }}>Pay with wallet</Text><Muted>Available: {money(walletBalance)}</Muted></View>
-                </Pressable>
-              ) : (
-                <Muted style={{ marginTop: 10 }}>Wallet balance: {money(walletBalance)}. Add funds in Account to pay the full amount by wallet.</Muted>
-              )
-            )}
             <View style={{ flexDirection: "row", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 12, marginTop: 10 }}>
               <Text style={{ fontWeight: "800", color: colors.ink }}>Total</Text>
               <Text style={{ fontWeight: "800", fontSize: 20, color: colors.ink }}>{money(total)}</Text>
             </View>
-            <Muted style={{ marginTop: 4 }}>Pay securely online. Select UPI QR in Razorpay checkout when available.</Muted>
+            <Muted style={{ marginTop: 4 }}>Pay with the UPI QR or ID managed by our super admin. Your order starts after payment verification.</Muted>
           </Card>
         </ScrollView>
 
         <View style={{ padding: 14, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.bg }}>
           {error ? <Alert>{error}</Alert> : null}
-          <Button title={useWallet ? `Pay ${money(total)} from wallet` : `Pay ${money(total)} and confirm`} onPress={submit} loading={submitting} disabled={outOfArea} />
+          <Button title={`Continue to pay ${money(total)}`} onPress={submit} loading={submitting} disabled={outOfArea || !gpsGranted || !location} />
+          {(!gpsGranted || !location) && <Muted style={{ textAlign: "center", marginTop: 8 }}>Enable location above to continue with your order.</Muted>}
         </View>
       </KeyboardAvoidingView>
-      <Modal visible={!!checkout} animationType="slide" onRequestClose={() => setCheckout(null)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12 }}>
-            <Text style={{ color: colors.ink, fontWeight: "800", fontSize: 17 }}>Secure payment</Text>
-            <Pressable onPress={() => setCheckout(null)} accessibilityLabel="Close payment">
-              <Ionicons name="close" size={26} color={colors.ink} />
-            </Pressable>
-          </View>
-          {checkout && <WebView source={{ html: paymentPage(checkout) }} onMessage={onPaymentMessage} javaScriptEnabled domStorageEnabled />}
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 }

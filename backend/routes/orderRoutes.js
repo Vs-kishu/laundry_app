@@ -3,12 +3,12 @@ const router = express.Router();
 const c = require("../controllers/orderController");
 const { protect, adminOnly, restrictTo } = require("../middleware/auth");
 const validate = require("../middleware/validate");
+const payments = require("../controllers/paymentController");
 
 router.post("/", protect, restrictTo("customer"), validate(c.createOrderSchema), c.createOrder);
-router.post("/payment/webhook", c.paymentWebhook);
-router.post("/payment/verify", protect, restrictTo("customer"), validate(c.verifyPaymentSchema), c.verifyPayment);
 router.get("/my", protect, restrictTo("customer"), c.getMyOrders);
 router.get("/", protect, adminOnly, c.getAllOrders);
+router.post("/:id/payment-reference", protect, restrictTo("customer"), validate(payments.paymentReferenceSchema), payments.submitPaymentReference);
 router.get("/:id", protect, c.getOrderById);
 router.put("/:id/cancel", protect, restrictTo("customer"), c.cancelOrder);
 router.put("/:id/status", protect, adminOnly, validate(c.statusSchema), c.updateOrderStatus);

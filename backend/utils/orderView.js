@@ -61,10 +61,16 @@ function serializeOrder(order, viewer) {
 
   // Handover codes are for the customer only.
   if (isOwner) {
+    out.paymentUtr = o.paymentUtr || "";
+    out.paymentReviewNote = o.paymentReviewNote || "";
     const otp = {};
     if (["placed", "pickup_assigned"].includes(o.status) && o.pickupOtp) otp.pickup = o.pickupOtp;
     if (["ready", "delivery_assigned", "out_for_delivery"].includes(o.status) && o.deliveryOtp) {
       otp.delivery = o.deliveryOtp;
+    }
+    if (isAdmin) {
+      out.paymentUtr = o.paymentUtr || "";
+      out.paymentReviewNote = o.paymentReviewNote || "";
     }
     out.otp = otp;
   }

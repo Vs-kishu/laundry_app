@@ -41,9 +41,13 @@ const orderSchema = new mongoose.Schema(
     totalAmount: { type: Number, required: true },
 
     status: { type: String, enum: STATUSES, default: "placed" },
-    paymentMethod: { type: String, enum: ["cod", "razorpay", "wallet"], default: "razorpay" },
-    paymentStatus: { type: String, enum: ["pending", "paid", "refunded"], default: "pending" },
+    paymentMethod: { type: String, enum: ["cod", "razorpay", "wallet", "upi"], default: "upi" },
+    paymentStatus: { type: String, enum: ["pending", "submitted", "paid", "refunded"], default: "pending" },
     paymentReference: { type: String, default: undefined, unique: true, sparse: true },
+    paymentUtr: { type: String, trim: true, maxlength: 50, unique: true, sparse: true },
+    paymentReviewNote: { type: String, trim: true, maxlength: 300 },
+    paymentReviewedAt: Date,
+    paymentReviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
     pickupPartner: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     deliveryPartner: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

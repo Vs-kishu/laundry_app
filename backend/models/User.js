@@ -1,6 +1,17 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
+const payoutDetailsSchema = new mongoose.Schema(
+  {
+    method: { type: String, enum: ["upi", "bank"], required: true },
+    upiId: { type: String, trim: true, lowercase: true },
+    accountHolder: { type: String, trim: true, maxlength: 80 },
+    accountNumber: { type: String, trim: true },
+    ifsc: { type: String, trim: true, uppercase: true },
+  },
+  { _id: false }
+);
+
 const partnerSchema = new mongoose.Schema(
   {
     vehicleType: { type: String, enum: ["bike", "scooter", "cycle", "ev"], default: "bike" },
@@ -16,6 +27,7 @@ const partnerSchema = new mongoose.Schema(
     },
     completedTasks: { type: Number, default: 0 },
     earnings: { type: Number, default: 0 },
+    payoutDetails: { type: payoutDetailsSchema, default: undefined },
   },
   { _id: false }
 );

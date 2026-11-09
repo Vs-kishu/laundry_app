@@ -1,11 +1,14 @@
 const { z } = require("zod");
 const Order = require("../models/Order");
 const User = require("../models/User");
-const WalletTransaction = require("../models/WalletTransaction");
+const PartnerEarning = require("../models/PartnerEarning");
 const asyncHandler = require("../utils/asyncHandler");
 const { notifyPartnerChanged, notifyUser } = require("../realtime/socket");
 
 const verificationSchema = z.object({ status: z.enum(["approved", "rejected", "pending"]) });
+const payoutSchema = z.object({
+  payoutReference: z.string().trim().min(3, "Enter the bank/UPI transfer reference").max(120),
+});
 
 // @route GET /api/admin/stats
 const getStats = asyncHandler(async (req, res) => {
@@ -37,7 +40,7 @@ const listPartners = asyncHandler(async (req, res) => {
   if (["pending", "approved", "rejected"].includes(req.query.status)) {
     filter["partner.verificationStatus"] = req.query.status;
   }
-  const partners = await User.find(filter).sort({ createdAt: -1 }).limit(200).lean();
+  const partners = await User.find(filter).select("-partner.payoutDetails").sort({ createdAt: -1 }).limit(200).lean();
   res.json(partners);
 });
 
@@ -60,33 +63,61 @@ const setVerification = asyncHandler(async (req, res) => {
   res.json(partner);
 });
 
-const getWalletLedger = asyncHandler(async (_req, res) => {
-  const [transactions, incoming, partnerEarnings, customerBalances, partnerBalances] = await Promise.all([
-    WalletTransaction.find({ accountType: "platform" }).sort({ createdAt: -1 }).limit(100).populate("order", "orderNumber").lean(),
-    WalletTransaction.aggregate([
-      { $match: { accountType: "platform", direction: "credit", type: { $in: ["order_payment", "wallet_topup"] } } },
-      { $group: { _id: "$type", total: { $sum: "$amount" }, count: { $sum: 1 } } },
+const getPartnerEarnings = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (["pending", "paid"].includes(req.query.status)) filter.status = req.query.status;
+  const [totals, earnings] = await Promise.all([
+    PartnerEarning.aggregate([
+      { $group: { _id: "$status", amount: { $sum: "$amount" }, count: { $sum: 1 } } },
     ]),
-    WalletTransaction.aggregate([
-      { $match: { accountType: "platform", type: "partner_earning", direction: "debit" } },
-      { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
-    ]),
-    User.aggregate([
-      { $match: { role: "customer", walletBalance: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: "$walletBalance" } } },
-    ]),
-    User.aggregate([
-      { $match: { role: "partner", walletBalance: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: "$walletBalance" } } },
-    ]),
+    PartnerEarning.find(filter)
+      .sort({ status: 1, earnedAt: -1 })
+      .limit(500)
+      .populate({ path: "partner", select: "name email phone partner.payoutDetails" })
+      .populate("order", "orderNumber totalAmount")
+      .populate("paidBy", "name")
+      .lean(),
   ]);
+  const summary = Object.fromEntries(totals.map(({ _id, amount, count }) => [_id, { amount, count }]));
   res.json({
-    incoming: Object.fromEntries(incoming.map((row) => [row._id, { total: row.total, count: row.count }])),
-    partnerEarnings: partnerEarnings[0]?.total || 0,
-    customerWalletLiability: customerBalances[0]?.total || 0,
-    partnerWalletLiability: partnerBalances[0]?.total || 0,
-    transactions,
+    pending: summary.pending || { amount: 0, count: 0 },
+    paid: summary.paid || { amount: 0, count: 0 },
+    earnings,
   });
 });
 
-module.exports = { getStats, listPartners, setVerification, verificationSchema, getWalletLedger };
+const markPartnerEarningPaid = asyncHandler(async (req, res) => {
+  const earning = await PartnerEarning.findById(req.params.id).populate({
+    path: "partner",
+    select: "partner.payoutDetails",
+  });
+  if (!earning) return res.status(404).json({ message: "Partner earning not found" });
+  if (earning.status !== "pending") return res.status(409).json({ message: "This earning has already been paid" });
+  const details = earning.partner?.partner?.payoutDetails;
+  if (!details || (details.method === "upi" && !details.upiId) ||
+      (details.method === "bank" && (!details.accountHolder || !details.accountNumber || !details.ifsc))) {
+    return res.status(409).json({ message: "The partner must add valid UPI or bank payout details before settlement" });
+  }
+  const updated = await PartnerEarning.findOneAndUpdate(
+    { _id: earning._id, status: "pending" },
+    { $set: { status: "paid", payoutReference: req.body.payoutReference, paidAt: new Date(), paidBy: req.user._id } },
+    { new: true }
+  )
+    .populate({ path: "partner", select: "name email phone partner.payoutDetails" })
+    .populate("order", "orderNumber totalAmount")
+    .populate("paidBy", "name")
+    .lean();
+  if (!updated) return res.status(409).json({ message: "This earning has already been paid" });
+  notifyUser(earning.partner._id, "partner:earnings", { earningId: String(earning._id), status: "paid" });
+  res.json(updated);
+});
+
+module.exports = {
+  getStats,
+  listPartners,
+  setVerification,
+  verificationSchema,
+  payoutSchema,
+  getPartnerEarnings,
+  markPartnerEarningPaid,
+};

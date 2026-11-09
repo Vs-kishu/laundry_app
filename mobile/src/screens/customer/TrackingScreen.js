@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
-import { Alert as NativeAlert, Linking, ScrollView, Text, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Alert as NativeAlert, Image, Linking, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import api, { errMsg } from "../../api";
+import { useAuth } from "../../AuthContext";
 import { useOrderTracking, useRoute, useStoreConfig } from "../../hooks";
 import LeafletMap from "../../components/LeafletMap";
 import { Gradient } from "../../components/Gradient";
@@ -25,6 +26,83 @@ function OtpCard({ label, code, who }) {
           </View>
         ))}
       </View>
+    </Card>
+  );
+}
+
+function PaymentInstructions({ order, reload }) {
+  const [config, setConfig] = useState(null);
+  const [paymentUtr, setPaymentUtr] = useState(order.paymentUtr || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => setPaymentUtr(order.paymentUtr || ""), [order.paymentUtr]);
+
+  useEffect(() => {
+    if (order.paymentStatus !== "pending") return;
+    api.get("/payments/config")
+      .then(({ data }) => {
+        setConfig(data);
+        if (!data.upiId || !data.qrImageData) setError("UPI payment details are not available. Please contact support; do not transfer money.");
+      })
+      .catch((e) => setError(errMsg(e, "Couldn't load the UPI payment details.")));
+  }, [order.paymentStatus]);
+
+  const submitReference = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/orders/${order._id}/payment-reference`, { paymentUtr });
+      await reload();
+    } catch (e) {
+      setError(errMsg(e, "Couldn't submit your payment reference."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (order.status !== "payment_pending") return null;
+  if (order.paymentStatus === "submitted") {
+    return (
+      <Card style={{ marginBottom: 12 }}>
+        <H2>Payment submitted for verification</H2>
+        <Muted style={{ marginTop: 6 }}>Reference {order.paymentUtr} has been submitted. We will confirm your order after an admin verifies the transfer.</Muted>
+      </Card>
+    );
+  }
+
+  const upiLink = config?.upiId
+    ? `upi://pay?pa=${encodeURIComponent(config.upiId)}&pn=${encodeURIComponent("Laundry Point")}&am=${Number(order.totalAmount).toFixed(2)}&cu=INR&tn=${encodeURIComponent(order.orderNumber)}`
+    : "";
+  const inputStyle = {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.ink,
+    backgroundColor: colors.surface,
+    marginTop: 6,
+  };
+
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <H2>Pay {money(order.totalAmount)} by UPI</H2>
+      <Muted style={{ marginTop: 6 }}>Scan this QR or pay to the UPI ID below. We will start processing the order after verifying your payment.</Muted>
+      {config?.qrImageData ? (
+        <Image source={{ uri: config.qrImageData }} resizeMode="contain" style={{ width: 220, height: 220, alignSelf: "center", marginTop: 12, backgroundColor: "#fff" }} />
+      ) : <Muted style={{ marginTop: 12 }}>{error ? "Payment QR unavailable." : "Loading payment QR…"}</Muted>}
+      {config?.upiId && (
+        <View style={{ marginTop: 12, padding: 12, borderRadius: radius.md, backgroundColor: colors.soft }}>
+          <Text style={{ color: colors.ink, fontWeight: "800", marginBottom: 8 }}>{config.upiId}</Text>
+          <Button title="Open UPI app" variant="secondary" small onPress={() => Linking.openURL(upiLink).catch((e) => setError(errMsg(e, "Couldn't open a UPI app.")))} />
+        </View>
+      )}
+      {order.paymentReviewNote ? <View style={{ marginTop: 12 }}><Alert>{order.paymentReviewNote} Please pay and submit a new UPI reference.</Alert></View> : null}
+      {error ? <View style={{ marginTop: 12 }}><Alert>{error}</Alert></View> : null}
+      <Muted style={{ marginTop: 12 }}>UPI transaction reference / UTR</Muted>
+      <TextInput value={paymentUtr} onChangeText={setPaymentUtr} autoCapitalize="characters" autoCorrect={false} maxLength={50} placeholder="Enter the UTR after paying" placeholderTextColor="#9AA6C3" style={inputStyle} />
+      <Button title="I have paid — submit reference" onPress={submitReference} loading={busy} disabled={busy || paymentUtr.trim().length < 6 || !config?.upiId || !config?.qrImageData} style={{ marginTop: 12 }} />
     </Card>
   );
 }
@@ -58,6 +136,7 @@ function Timeline({ order }) {
 
 export default function TrackingScreen({ route: nav }) {
   const id = nav.params.id;
+  const { user } = useAuth();
   const { order, live, error, connected, reload } = useOrderTracking(id);
   const config = useStoreConfig();
   const [busy, setBusy] = useState(false);
@@ -104,7 +183,8 @@ export default function TrackingScreen({ route: nav }) {
 
   const h = headlineFor(order, live);
   const eta = isLive && live?.etaMinutes;
-  const canCancel = ["placed", "pickup_assigned"].includes(order.status);
+  const canCancel = ["payment_pending", "placed", "pickup_assigned"].includes(order.status) &&
+    (order.status !== "payment_pending" || order.paymentStatus === "pending");
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
@@ -129,6 +209,8 @@ export default function TrackingScreen({ route: nav }) {
           </Text>
         )}
       </Gradient>
+
+      {user?.role === "customer" && <PaymentInstructions order={order} reload={reload} />}
 
       {order.status !== "cancelled" && (
         <LeafletMap style={{ height: 300, marginBottom: 14 }} markers={markers} route={partnerPt ? road : null} fitKey={`${order.status}|${partnerPt ? "live" : "wait"}|${road ? "r" : ""}`} />
@@ -177,7 +259,7 @@ export default function TrackingScreen({ route: nav }) {
           <Text style={{ fontWeight: "800", color: colors.ink }}>Total</Text>
           <Text style={{ fontWeight: "800", color: colors.ink }}>{money(order.totalAmount)}</Text>
         </View>
-        <Muted style={{ marginTop: 4 }}>{order.paymentStatus === "refunded" ? "Refunded to wallet" : order.paymentMethod === "wallet" ? "Paid from wallet" : order.paymentStatus === "paid" ? "Paid online" : "Payment pending"}</Muted>
+        <Muted style={{ marginTop: 4 }}>{order.paymentStatus === "refunded" ? "Refunded" : order.paymentStatus === "paid" ? "Paid" : order.paymentStatus === "submitted" ? "Payment submitted — awaiting verification" : "Payment pending"}</Muted>
         <Muted style={{ marginTop: 12 }}>📍 {order.pickupAddress}</Muted>
         {order.notes ? <Muted style={{ marginTop: 6 }}>“{order.notes}”</Muted> : null}
       </Card>

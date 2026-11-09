@@ -2,75 +2,45 @@
 
 import { useCallback, useEffect, useState } from "react";
 import api, { errMsg } from "../../lib/api";
-import { useAuth, useRequireRole } from "../../context/AuthContext";
+import { useRequireRole } from "../../context/AuthContext";
 import { money, timeOnly } from "../../lib/format";
 import { Alert, PageLoader } from "../../components/ui";
 
-export default function WalletPage() {
-  const { ready } = useRequireRole(["customer", "partner"], "/login");
-  const { user, refreshUser } = useAuth();
-  const [wallet, setWallet] = useState(null);
-  const [amount, setAmount] = useState("500");
+const EMPTY_DETAILS = { method: "upi", upiId: "", accountHolder: "", accountNumber: "", ifsc: "" };
+
+export default function PartnerEarningsPage() {
+  const { ready } = useRequireRole(["partner"], "/partner/login");
+  const [summary, setSummary] = useState(null);
+  const [details, setDetails] = useState(EMPTY_DETAILS);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const loadWallet = useCallback(async () => {
-    const { data } = await api.get("/wallet");
-    setWallet(data);
+  const loadSummary = useCallback(async () => {
+    const { data } = await api.get("/partner/payout");
+    setSummary(data);
+    if (data.payoutDetails) setDetails({ ...EMPTY_DETAILS, ...data.payoutDetails });
   }, []);
 
   useEffect(() => {
-    if (ready) loadWallet().catch((err) => setError(errMsg(err)));
-  }, [ready, loadWallet]);
+    if (ready) loadSummary().catch((err) => setError(errMsg(err)));
+  }, [ready, loadSummary]);
 
-  const topUp = async () => {
+  const saveDetails = async (event) => {
+    event.preventDefault();
     setBusy(true);
     setError("");
+    setNotice("");
+    const payload = details.method === "upi"
+      ? { method: "upi", upiId: details.upiId }
+      : { method: "bank", accountHolder: details.accountHolder, accountNumber: details.accountNumber, ifsc: details.ifsc };
     try {
-      const { data: checkout } = await api.post("/wallet/topups", { amount: Math.round(Number(amount) * 100) });
-      if (!checkout.keyId) {
-        throw new Error("Razorpay key ID is missing from the backend response. Set RAZORPAY_KEY_ID on the backend and restart or redeploy the API.");
-      }
-      const loaded = await new Promise((resolve) => {
-        if (window.Razorpay) return resolve(true);
-        const script = document.createElement("script");
-        script.src = "https://checkout.razorpay.com/v1/checkout.js";
-        script.onload = () => resolve(true);
-        script.onerror = () => resolve(false);
-        document.body.appendChild(script);
-      });
-      if (!loaded) throw new Error("Could not load the secure payment form. Check your connection and try again.");
-      await new Promise((resolve) => {
-        const payment = new window.Razorpay({
-          key: checkout.keyId,
-          amount: checkout.amount,
-          currency: checkout.currency,
-          name: checkout.name,
-          description: checkout.description,
-          order_id: checkout.orderId,
-          prefill: checkout.prefill,
-          method: { upi: true },
-          theme: { color: "#2F6BFF" },
-          handler: async (response) => {
-            try {
-              await api.post("/wallet/topups/verify", response);
-              await Promise.all([loadWallet(), refreshUser()]);
-              resolve();
-            } catch (err) {
-              setError(errMsg(err, "Payment verification failed. Refresh your wallet before retrying."));
-              resolve();
-            }
-          },
-          modal: { ondismiss: resolve },
-        });
-        payment.on("payment.failed", (response) => {
-          setError(response.error?.description || "Payment failed. Please try again.");
-          resolve();
-        });
-        payment.open();
-      });
+      const { data } = await api.put("/partner/payout-details", payload);
+      setDetails({ ...EMPTY_DETAILS, ...data.payoutDetails });
+      setNotice("Payout details saved.");
+      await loadSummary();
     } catch (err) {
-      setError(errMsg(err, "Couldn't start your wallet top-up."));
+      setError(errMsg(err));
     } finally {
       setBusy(false);
     }
@@ -80,46 +50,88 @@ export default function WalletPage() {
 
   return (
     <main className="container-x max-w-4xl py-8">
-      <h1 className="text-3xl font-extrabold">Wallet</h1>
-      <p className="mt-1 text-sm text-muted">
-        {user.role === "partner" ? "Delivery earnings are credited here as soon as each task leg is completed. Withdrawals are not enabled yet." : "Add funds securely online and use your wallet to pay for orders."}
+      <h1 className="text-3xl font-extrabold">Earnings &amp; payouts</h1>
+      <p className="mt-2 text-sm text-muted">
+        Earn 10% of the final order total for each completed leg. Pickup earnings are recorded when you hand items to the store; delivery earnings are recorded after OTP-confirmed delivery. The admin transfers pending earnings manually to your saved payout method.
       </p>
       {error && <div className="mt-5"><Alert>{error}</Alert></div>}
+      {notice && <div className="mt-5"><Alert tone="success">{notice}</Alert></div>}
 
-      <section className="mt-6 grid gap-5 md:grid-cols-2">
-        <div className="card p-6">
-          <p className="text-sm font-semibold text-muted">Available balance</p>
-          <p className="mt-2 font-display text-4xl font-extrabold">{money(wallet?.balance ?? user.walletBalance ?? 0)}</p>
-          {user.role === "partner" && <p className="mt-2 text-sm text-muted">Lifetime earnings: {money(wallet?.lifetimeEarnings || 0)}</p>}
+      <section className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div className="card p-5">
+          <p className="text-sm text-muted">Pending payout</p>
+          <p className="mt-1 font-display text-3xl font-extrabold">{money(summary?.pending.amount || 0)}</p>
+          <p className="mt-1 text-xs text-muted">{summary?.pending.count || 0} completed legs</p>
         </div>
-        {user.role === "customer" && (
-          <div className="card p-6">
-            <h2 className="text-lg font-bold">Add money</h2>
-            <p className="mt-1 text-sm text-muted">Secure Razorpay checkout. Choose UPI QR in checkout when offered by your payment methods.</p>
-            <div className="mt-4 flex gap-2">
-              <label className="sr-only" htmlFor="wallet-amount">Amount in rupees</label>
-              <input id="wallet-amount" className="input" type="number" min="1" max="5000" step="1" value={amount} onChange={(event) => setAmount(event.target.value)} />
-              <button className="btn btn-primary shrink-0" disabled={busy || Number(amount) < 1 || Number(amount) > 5000} onClick={topUp}>
-                {busy ? "Opening…" : "Add funds"}
-              </button>
-            </div>
-          </div>
-        )}
+        <div className="card p-5">
+          <p className="text-sm text-muted">Already paid</p>
+          <p className="mt-1 font-display text-3xl font-extrabold">{money(summary?.paid.amount || 0)}</p>
+          <p className="mt-1 text-xs text-muted">{summary?.paid.count || 0} completed legs</p>
+        </div>
       </section>
 
+      <form onSubmit={saveDetails} className="card mt-6 space-y-4 p-5">
+        <div>
+          <h2 className="text-lg font-bold">Payout method</h2>
+          <p className="mt-1 text-sm text-muted">Add the UPI ID or bank account where the admin should send your earnings.</p>
+        </div>
+        <div className="flex gap-2">
+          {["upi", "bank"].map((method) => (
+            <button
+              key={method}
+              type="button"
+              onClick={() => setDetails((current) => ({ ...current, method }))}
+              aria-pressed={details.method === method}
+              className={`btn btn-sm ${details.method === method ? "btn-primary" : "btn-secondary"}`}
+            >
+              {method === "upi" ? "UPI ID" : "Bank account"}
+            </button>
+          ))}
+        </div>
+        {details.method === "upi" ? (
+          <div>
+            <label htmlFor="upi-id" className="label">UPI ID</label>
+            <input id="upi-id" className="input" value={details.upiId} onChange={(event) => setDetails({ ...details, upiId: event.target.value })} placeholder="name@bank" required />
+          </div>
+        ) : (
+          <>
+            <div>
+              <label htmlFor="account-holder" className="label">Account holder name</label>
+              <input id="account-holder" className="input" value={details.accountHolder} onChange={(event) => setDetails({ ...details, accountHolder: event.target.value })} autoComplete="name" required minLength={2} maxLength={80} />
+            </div>
+            <div>
+              <label htmlFor="account-number" className="label">Bank account number</label>
+              <input id="account-number" className="input" inputMode="numeric" autoComplete="off" value={details.accountNumber} onChange={(event) => setDetails({ ...details, accountNumber: event.target.value.replace(/\D/g, "").slice(0, 20) })} required minLength={8} maxLength={20} />
+            </div>
+            <div>
+              <label htmlFor="ifsc" className="label">IFSC code</label>
+              <input id="ifsc" className="input uppercase" value={details.ifsc} onChange={(event) => setDetails({ ...details, ifsc: event.target.value.toUpperCase() })} autoComplete="off" required maxLength={11} />
+            </div>
+          </>
+        )}
+        {summary?.payoutDetails && (
+          <p className="text-xs text-muted">
+            Saved method: {summary.payoutDetails.method === "upi"
+              ? summary.payoutDetails.upiId
+              : `${summary.payoutDetails.accountHolder} · account ending ${summary.payoutDetails.accountNumber?.slice(-4) || "—"} · ${summary.payoutDetails.ifsc}`}
+          </p>
+        )}
+        <button className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save payout details"}</button>
+      </form>
+
       <section className="mt-8">
-        <h2 className="text-xl font-bold">Recent transactions</h2>
+        <h2 className="text-xl font-bold">Earning history</h2>
         <div className="mt-3 space-y-3">
-          {wallet?.transactions.length === 0 && <div className="card p-6 text-sm text-muted">No wallet transactions yet.</div>}
-          {wallet?.transactions.map((transaction) => (
-            <article key={transaction._id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
+          {summary?.earnings.length === 0 && <div className="card p-5 text-sm text-muted">Completed task earnings will appear here.</div>}
+          {summary?.earnings.map((earning) => (
+            <article key={earning._id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
               <div>
-                <p className="font-semibold">{transaction.description}</p>
-                <p className="mt-1 text-xs text-muted">{timeOnly(transaction.createdAt)} · {transaction.type.replaceAll("_", " ")}</p>
+                <p className="font-semibold">{earning.order?.orderNumber || "Order"} · {earning.leg} leg</p>
+                <p className="mt-1 text-xs capitalize text-muted">
+                  {timeOnly(earning.earnedAt)} · {earning.status === "paid" ? `Paid · ${earning.payoutReference}` : "Pending admin payout"}
+                </p>
               </div>
-              <p className={`font-display text-lg font-bold ${transaction.direction === "credit" ? "text-success" : "text-ink"}`}>
-                {transaction.direction === "credit" ? "+" : "−"}{money(transaction.amount)}
-              </p>
+              <p className="font-display text-lg font-bold">{money(earning.amount)}</p>
             </article>
           ))}
         </div>

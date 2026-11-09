@@ -26,6 +26,7 @@ export const shadow = {
 };
 
 export const STATUS_META = {
+  payment_pending: { label: "Awaiting payment verification", short: "Payment pending", bg: "#FFF1CC", fg: "#0B1B3A" },
   placed: { label: "Order placed", short: "Placed", bg: "#FFF1CC", fg: "#0B1B3A" },
   pickup_assigned: { label: "Pickup partner assigned", short: "Pickup assigned", bg: "#DCE8FF", fg: "#1E4FD8" },
   picked_up: { label: "Picked up", short: "Picked up", bg: "#DCE8FF", fg: "#1E4FD8" },
@@ -39,7 +40,7 @@ export const STATUS_META = {
 };
 
 export const TIMELINE_STEPS = [
-  "placed", "pickup_assigned", "picked_up", "at_store", "in_progress", "ready", "delivery_assigned", "out_for_delivery", "delivered",
+  "payment_pending", "placed", "pickup_assigned", "picked_up", "at_store", "in_progress", "ready", "delivery_assigned", "out_for_delivery", "delivered",
 ];
 export const ACTIVE_STATUSES = TIMELINE_STEPS.filter((s) => s !== "delivered");
 export const LIVE_STATUSES = ["pickup_assigned", "picked_up", "delivery_assigned", "out_for_delivery"];
@@ -48,6 +49,9 @@ export function headlineFor(order, live) {
   const name = order.partner?.name?.split(" ")[0] || "Your partner";
   const eta = live?.etaMinutes ? ` - ${live.etaMinutes} min away` : "";
   switch (order.status) {
+    case "payment_pending": return order.paymentStatus === "submitted"
+      ? { title: "Payment submitted", sub: "We're verifying your UPI transfer before confirming the order." }
+      : { title: "Complete payment to confirm", sub: "Submit your UPI transaction reference after paying." };
     case "placed": return { title: "Finding a pickup partner", sub: "Hang tight, this usually takes under a minute." };
     case "pickup_assigned": return { title: `${name} is coming to pick up${eta}`, sub: "Share the pickup OTP when they arrive." };
     case "picked_up": return { title: `Heading to our store${eta}`, sub: "Your clothes are on their way to be cleaned." };

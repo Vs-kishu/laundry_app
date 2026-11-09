@@ -1,5 +1,6 @@
 // Order status presentation shared by customer, partner and admin screens.
 export const STATUS_META = {
+  payment_pending: { label: "Awaiting payment verification", short: "Payment pending", tone: "bg-sun/25 text-ink" },
   placed: { label: "Order placed", short: "Placed", tone: "bg-sun/25 text-ink" },
   pickup_assigned: { label: "Pickup partner assigned", short: "Pickup assigned", tone: "bg-brand/15 text-link" },
   picked_up: { label: "Picked up", short: "Picked up", tone: "bg-brand/15 text-link" },
@@ -14,6 +15,7 @@ export const STATUS_META = {
 
 // Timeline shown on the tracking page
 export const TIMELINE_STEPS = [
+  "payment_pending",
   "placed",
   "pickup_assigned",
   "picked_up",
@@ -33,6 +35,10 @@ export function headlineFor(order, live) {
   const name = order.partner?.name?.split(" ")[0] || "Your partner";
   const eta = live?.etaMinutes ? ` - ${live.etaMinutes} min away` : "";
   switch (order.status) {
+    case "payment_pending":
+      return order.paymentStatus === "submitted"
+        ? { title: "Payment submitted", sub: "We are verifying your UPI transfer before confirming the order." }
+        : { title: "Complete payment to confirm", sub: "Submit your UPI transaction reference after paying." };
     case "placed":
       return { title: "Finding a pickup partner", sub: "Hang tight, this usually takes under a minute." };
     case "pickup_assigned":
@@ -58,4 +64,4 @@ export function headlineFor(order, live) {
   }
 }
 
-export const CUSTOMER_CANCELLABLE_UI = ["placed", "pickup_assigned"];
+export const CUSTOMER_CANCELLABLE_UI = ["payment_pending", "placed", "pickup_assigned"];
