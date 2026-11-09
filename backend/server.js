@@ -1,4 +1,6 @@
-require("dotenv").config({ path: require("path").join(__dirname, ".env") });
+const path = require("path");
+const envFile = process.env.NODE_ENV === "production" ? ".env.production" : ".env.local";
+require("dotenv").config({ path: path.join(__dirname, envFile) });
 const http = require("http");
 const mongoose = require("mongoose");
 const { validateEnv } = require("./config/env");
