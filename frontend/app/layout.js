@@ -2,6 +2,7 @@ import { Plus_Jakarta_Sans, Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "../context/AuthContext";
 import SiteChrome from "../components/SiteChrome";
+import RealtimeNotifications from "../components/RealtimeNotifications";
 import { SITE } from "../lib/site";
 
 // next/font self-hosts the fonts at build time: no render-blocking Google Fonts request.
@@ -58,7 +59,10 @@ export default function RootLayout({ children }) {
           Skip to content
         </a>
         <AuthProvider>
-          <SiteChrome>{children}</SiteChrome>
+          <SiteChrome>
+            {children}
+            <RealtimeNotifications />
+          </SiteChrome>
         </AuthProvider>
       </body>
     </html>

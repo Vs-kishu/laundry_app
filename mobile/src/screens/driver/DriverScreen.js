@@ -17,7 +17,7 @@ const NEXT = {
   pickup_assigned: { dest: "customer", label: "Picked up", needsOtp: true, hint: "Ask the customer for their 4-digit pickup OTP", go: "Navigate to customer" },
   picked_up: { dest: "store", label: "Reached store - handed over", needsOtp: false, hint: "Hand the clothes to store staff", go: "Navigate to store" },
   delivery_assigned: { dest: "store", label: "Collected - start delivery", needsOtp: false, hint: "Collect the clean clothes at the store", go: "Navigate to store" },
-  out_for_delivery: { dest: "customer", label: "Delivered", needsOtp: true, hint: "Ask for the 4-digit delivery OTP and collect cash", go: "Navigate to customer" },
+  out_for_delivery: { dest: "customer", label: "Delivered", needsOtp: true, hint: "Ask for the 4-digit delivery OTP", go: "Navigate to customer" },
 };
 
 export default function DriverScreen() {
@@ -117,7 +117,17 @@ export default function DriverScreen() {
   const toggle = async (value) => {
     setError("");
     try {
-      const { data } = await api.put("/partner/status", { online: value });
+      let location;
+      if (value) {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") throw new Error("Allow location access in Settings to go online.");
+        if (!(await Location.hasServicesEnabledAsync())) throw new Error("Turn on device location services to go online.");
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setMyPos(location);
+        setGpsError("");
+      }
+      const { data } = await api.put("/partner/status", { online: value, ...(location ? { location } : {}) });
       setOnline(data.isOnline);
       if (!data.isOnline) setMyPos(null);
       await refreshUser();
@@ -251,7 +261,7 @@ export default function DriverScreen() {
                       {selected.notes ? <Muted style={{ marginTop: 8 }}>“{selected.notes}”</Muted> : null}
                       {selected.status === "out_for_delivery" && (
                         <Text style={{ backgroundColor: "#FFF1CC", color: colors.ink, fontWeight: "800", padding: 10, borderRadius: radius.md, marginTop: 10, overflow: "hidden" }}>
-                          Collect cash: {money(selected.totalAmount)}
+                          Payment: {selected.paymentStatus === "refunded" ? "Refunded to wallet" : selected.paymentMethod === "wallet" ? "Paid from wallet" : selected.paymentStatus === "paid" ? "Paid online" : "Not paid"}
                         </Text>
                       )}
                       {destination && (

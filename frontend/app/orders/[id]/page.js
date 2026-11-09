@@ -40,7 +40,7 @@ function OtpCard({ label, code, who }) {
 
 export default function OrderTrackingPage() {
   const { id } = useParams();
-  const { user, ready } = useRequireRole(["customer", "admin"]);
+  const { user, ready } = useRequireRole(["customer", "admin", "super_admin"]);
   const { order, live, error, connected, reload } = useOrderTracking(id, ready);
   const config = useStoreConfig();
   const [busy, setBusy] = useState(false);
@@ -195,6 +195,12 @@ export default function OrderTrackingPage() {
                   <span className="font-medium">{money(i.subtotal)}</span>
                 </li>
               ))}
+              {order.discountAmount > 0 && (
+                <li className="flex justify-between text-success">
+                  <span>Offer{order.couponCode ? ` (${order.couponCode})` : ""}</span>
+                  <span>-{money(order.discountAmount)}</span>
+                </li>
+              )}
               <li className="flex justify-between border-t border-line pt-2 text-muted">
                 <span>Delivery</span>
                 <span>{order.deliveryFee ? money(order.deliveryFee) : "FREE"}</span>
@@ -211,7 +217,7 @@ export default function OrderTrackingPage() {
               </li>
             </ul>
             <p className="mt-2 text-xs text-muted">
-              {order.paymentStatus === "paid" ? "Paid on delivery" : "Pay on delivery"}
+              {order.paymentStatus === "refunded" ? "Refunded to wallet" : order.paymentMethod === "wallet" ? "Paid from wallet" : order.paymentStatus === "paid" ? "Paid online" : "Payment pending"}
             </p>
 
             <div className="mt-5 space-y-3 border-t border-line pt-5 text-sm">

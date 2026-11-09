@@ -32,8 +32,9 @@ const userSchema = new mongoose.Schema(
     },
     password: { type: String, required: [true, "Password is required"], minlength: 6, select: false },
     phone: { type: String, required: [true, "Phone number is required"], trim: true },
-    role: { type: String, enum: ["customer", "partner", "admin"], default: "customer" },
+    role: { type: String, enum: ["customer", "partner", "admin", "super_admin"], default: "customer" },
     address: { type: String, default: "" },
+    walletBalance: { type: Number, default: 0, min: 0 },
     partner: { type: partnerSchema, default: undefined },
   },
   { timestamps: true }

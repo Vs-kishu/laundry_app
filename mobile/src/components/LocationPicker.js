@@ -8,7 +8,7 @@ import { reverseGeocode, searchPlaces } from "../geo";
 import { colors, radius } from "../theme";
 
 // Search box + "use my location" + tap/drag pin. onChange({ lat, lng, address? }).
-export default function LocationPicker({ value, onChange, store }) {
+export default function LocationPicker({ value, onChange, store, onGpsChange }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -54,13 +54,16 @@ export default function LocationPicker({ value, onChange, store }) {
   const useMyLocation = async () => {
     setGeoError("");
     setLocating(true);
+    onGpsChange?.(false);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") throw new Error("denied");
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      onGpsChange?.(true);
       pick({ lat: pos.coords.latitude, lng: pos.coords.longitude });
     } catch {
-      setGeoError("Couldn't get your location. Allow location access, or search / tap on the map.");
+      onGpsChange?.(false);
+      setGeoError("Couldn't get your location. Allow location access in Settings and try again.");
     }
     setLocating(false);
   };
@@ -116,7 +119,7 @@ export default function LocationPicker({ value, onChange, store }) {
         {!value && (
           <View pointerEvents="none" style={{ position: "absolute", top: 10, left: 0, right: 0, alignItems: "center" }}>
             <Text style={{ backgroundColor: "rgba(11,27,58,.85)", color: "#fff", fontSize: 12, fontWeight: "600", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 99, overflow: "hidden" }}>
-              Tap the map to drop a pin
+              Enable location to set your pickup point
             </Text>
           </View>
         )}

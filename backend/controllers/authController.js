@@ -71,6 +71,7 @@ const userPayload = (u, withToken = false) => ({
   phone: u.phone,
   role: u.role,
   address: u.address,
+  walletBalance: u.walletBalance || 0,
   ...(u.role === "partner" && u.partner
     ? {
         partner: {

@@ -45,7 +45,10 @@ export default function StaffLogin({ role }) {
     setLoading(true);
     try {
       const user = await login(form.identifier, form.password);
-      if (user.role !== role) {
+      const hasRole = role === "admin"
+        ? ["admin", "super_admin"].includes(user.role)
+        : user.role === role;
+      if (!hasRole) {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
         setError(`This account isn't ${role === "admin" ? "an admin" : "a driver"} account.`);

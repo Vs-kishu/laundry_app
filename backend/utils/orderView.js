@@ -19,7 +19,7 @@ const partnerBrief = (p) =>
 function serializeOrder(order, viewer) {
   const o = order.toObject ? order.toObject() : order;
   const isOwner = id(o.user) === String(viewer._id);
-  const isAdmin = viewer.role === "admin";
+  const isAdmin = ["admin", "super_admin"].includes(viewer.role);
   const activeLeg = PICKUP_ACTIVE.includes(o.status) ? "pickup" : DELIVERY_ACTIVE.includes(o.status) ? "delivery" : null;
   const activePartner = activeLeg === "pickup" ? o.pickupPartner : activeLeg === "delivery" ? o.deliveryPartner : null;
   const isAssignedPartner = viewer.role === "partner" && id(activePartner) === String(viewer._id);
@@ -38,6 +38,8 @@ function serializeOrder(order, viewer) {
     pickupSlot: o.pickupSlot,
     notes: o.notes,
     subtotal: o.subtotal,
+    discountAmount: o.discountAmount || 0,
+    couponCode: o.couponCode || "",
     deliveryFee: o.deliveryFee,
     expressFee: o.expressFee,
     totalAmount: o.totalAmount,

@@ -22,17 +22,47 @@ npm install && npm run dev
 `npm run seed` creates services, the store (default: Connaught Place, Delhi - change it via
 `STORE_LAT/STORE_LNG` or `PUT /api/store`), and in development:
 
-| Role     | Email                       | Password       |
-|----------|-----------------------------|----------------|
-| Admin    | admin@laundrypoint.local    | Admin@12345    |
-| Partner  | rider@laundrypoint.local    | Rider@12345    |
+| Role             | Email                           | Password         |
+|------------------|---------------------------------|------------------|
+| Super admin      | superadmin@laundrypoint.local   | `SuperAdmin@12345` |
+| Admin            | admin@laundrypoint.local        | Admin@12345      |
+| Normal user      | customer@laundrypoint.local     | Customer@12345   |
+| Delivery partner | rider@laundrypoint.local        | Rider@12345      |
 
-In production the seed only creates an admin from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`.
+Existing accounts are never overwritten. In production, configure `SEED_ADMIN_EMAIL` /
+`SEED_ADMIN_PASSWORD` and `SEED_SUPER_ADMIN_EMAIL` / `SEED_SUPER_ADMIN_PASSWORD`; demo
+customer and delivery-partner accounts are only created outside production. Both admin roles
+use the admin console at `/admin`.
+
+The admin portal is available at `/admin` (sign in at `/admin/login`). Customers must allow
+location access and use their current GPS location to book; delivery partners must allow GPS
+before going online. Deploy over HTTPS so browsers can grant geolocation permission.
+
+Orders are paid online through Razorpay before they are created; customers may instead pay
+from their wallet when its balance covers the full order. Razorpay checkout enables UPI, where
+the payment provider may offer a QR option depending on merchant/account settings. Set `RAZORPAY_KEY_ID` and
+`RAZORPAY_KEY_SECRET` in the backend environment, starting with Razorpay test credentials;
+enable automatic payment capture in the Razorpay account. Configure a Razorpay webhook for
+`POST /api/orders/payment/webhook` using the `payment.captured` event, and set its signing
+secret as `RAZORPAY_WEBHOOK_SECRET`.
+The backend creates and verifies payment orders; do not put the secret in frontend/mobile
+configuration. Customers can add money to their wallet online and review wallet transactions.
+Partner task earnings are credited to the partner wallet immediately when each pickup or delivery
+leg is completed. Partner withdrawals are not enabled yet. The admin portal's Wallet ledger tab shows payment entries, partner earnings,
+and outstanding customer/partner wallet balances. Wallet updates use MongoDB transactions, so
+configure MongoDB as a replica set (MongoDB Atlas already supports this).
+Offers (percentage, fixed amount, BOGO for item-based services, and quantity
+threshold discounts) are managed from Dashboard → Offers. `npm run seed` adds `WELCOME15`,
+`BULK10`, and `BOGOIRON` starter offers without overwriting existing offers.
+
+Order, partner, and task changes are delivered live in the signed-in web and mobile apps;
+web browsers can also show desktop alerts after permission is granted. These are live
+connection notifications, not background push delivery when an app is closed.
 
 ## Roles and flow
 
 - **Customer** `/book`, `/orders`, `/orders/:id` (live map, ETA, OTPs)
-- **Partner** `/partner/signup` -> admin approves -> `/partner` (go online, accept tasks, navigate, OTP handover, GPS streamed over socket)
+- **Partner** `/partner/signup` -> admin approves -> `/partner` (online status is saved until manually switched off; refreshing does not take the partner offline; accept tasks with GPS enabled, navigate, OTP handover, GPS streamed over socket)
 - **Admin** `/admin` (approve partners, run store steps, assign/cancel, stats)
 
 `placed -> pickup_assigned -> picked_up (pickup OTP) -> at_store -> in_progress -> ready ->

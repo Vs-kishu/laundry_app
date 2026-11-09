@@ -7,7 +7,7 @@ import { closeSocket } from "../lib/socket";
 
 const AuthContext = createContext(null);
 
-export const roleHome = (role) => (role === "admin" ? "/admin" : role === "partner" ? "/partner" : "/book");
+export const roleHome = (role) => (["admin", "super_admin"].includes(role) ? "/admin" : role === "partner" ? "/partner" : "/book");
 
 const readStored = () => {
   try {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import api, { errMsg } from "../../lib/api";
 import { useRequireRole } from "../../context/AuthContext";
 import useStoreConfig from "../../hooks/useStoreConfig";
@@ -42,6 +43,7 @@ export default function BookPage() {
   const [services, setServices] = useState(null);
   const [quantities, setQuantities] = useState({});
   const [location, setLocation] = useState(null);
+  const [gpsGranted, setGpsGranted] = useState(false);
   const [address, setAddress] = useState("");
   const [pickupType, setPickupType] = useState("express");
   const [pickupDate, setPickupDate] = useState(localToday());
@@ -49,6 +51,13 @@ export default function BookPage() {
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedOffer, setAppliedOffer] = useState(null);
+  const [offerError, setOfferError] = useState("");
+  const [offerBusy, setOfferBusy] = useState(false);
+  const [availableOffers, setAvailableOffers] = useState([]);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [useWallet, setUseWallet] = useState(false);
 
   useEffect(() => {
     if (user?.address) setAddress((a) => a || user.address);
@@ -62,6 +71,8 @@ export default function BookPage() {
         setServices([]);
         setError(errMsg(err, "Couldn't load services. Please refresh the page."));
       });
+    api.get("/offers").then(({ data }) => setAvailableOffers(data)).catch((err) => setOfferError(errMsg(err, "Couldn't load current offers.")));
+      api.get("/wallet").then(({ data }) => setWalletBalance(data.balance)).catch(() => {});
   }, []);
 
   const slots = useMemo(() => {
@@ -89,10 +100,15 @@ export default function BookPage() {
 
   const selected = (services || []).filter((s) => quantities[s._id] > 0);
   const subtotal = selected.reduce((sum, s) => sum + s.pricePerUnit * quantities[s._id], 0);
+  const basketKey = JSON.stringify({ pickupType, items: selected.map((s) => [s._id, quantities[s._id]]) });
+  const currentOffer = appliedOffer?.basketKey === basketKey ? appliedOffer : null;
   const fees = config?.fees;
   const deliveryFee = !selected.length || !fees ? 0 : subtotal >= fees.freeDeliveryAbove ? 0 : fees.delivery;
   const expressFee = pickupType === "express" && selected.length && fees ? fees.express : 0;
-  const total = subtotal + deliveryFee + expressFee;
+  const total = subtotal - (currentOffer?.discountAmount || 0) + deliveryFee + expressFee;
+  useEffect(() => {
+    if (walletBalance < total) setUseWallet(false);
+  }, [walletBalance, total]);
 
   const distanceKm = location && config?.store ? haversineKm(config.store.location, location) : null;
   const outOfArea = distanceKm != null && distanceKm > config.store.serviceRadiusKm;
@@ -102,10 +118,30 @@ export default function BookPage() {
     if (addr) setAddress(addr);
   };
 
+  const applyCoupon = async () => {
+    setOfferError("");
+    setOfferBusy(true);
+    try {
+      const { data } = await api.post("/offers/validate", {
+        couponCode,
+        items: selected.map((s) => ({ serviceId: s._id, quantity: quantities[s._id] })),
+        pickupType,
+      });
+      setAppliedOffer({ ...data, basketKey });
+      setCouponCode(data.offer.code);
+    } catch (err) {
+      setAppliedOffer(null);
+      setOfferError(errMsg(err, "That offer could not be applied."));
+    } finally {
+      setOfferBusy(false);
+    }
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     if (!selected.length) return setError("Add at least one item to your order.");
+    if (!gpsGranted) return setError("Enable your device location and use your current location before continuing.");
     if (!location) return setError("Drop a pin on the map so our partner can find you.");
     if (outOfArea) return setError("That location is outside our delivery area.");
     if (address.trim().length < 5) return setError("Enter a complete address (flat, building, landmark).");
@@ -113,17 +149,64 @@ export default function BookPage() {
 
     setSubmitting(true);
     try {
-      const { data } = await api.post("/orders", {
+      const { data: checkout } = await api.post("/orders", {
         items: selected.map((s) => ({ serviceId: s._id, quantity: quantities[s._id] })),
         pickupAddress: address.trim(),
         pickupLocation: location,
         pickupType,
+        useWallet,
+        couponCode: currentOffer?.offer?.code || "",
         ...(pickupType === "scheduled" ? { pickupDate, pickupSlot } : {}),
         notes,
       });
-      router.push(`/orders/${data._id}`);
+      if (checkout.paidByWallet) {
+        router.push(`/orders/${checkout.order._id}`);
+        return;
+      }
+      if (!checkout.keyId) {
+        throw new Error("Razorpay key ID is missing from the backend response. Set RAZORPAY_KEY_ID on the backend and restart or redeploy the API.");
+      }
+      const loaded = await new Promise((resolve) => {
+        if (window.Razorpay) return resolve(true);
+        const script = document.createElement("script");
+        script.src = "https://checkout.razorpay.com/v1/checkout.js";
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.body.appendChild(script);
+      });
+      if (!loaded) throw new Error("Could not load the secure payment form. Check your connection and try again.");
+      await new Promise((resolve) => {
+        const payment = new window.Razorpay({
+          key: checkout.keyId,
+          amount: checkout.amount,
+          currency: checkout.currency,
+          name: checkout.name,
+          description: checkout.description,
+          order_id: checkout.orderId,
+          prefill: checkout.prefill,
+          method: { upi: true },
+          theme: { color: "#2F6BFF" },
+          handler: async (response) => {
+            try {
+              const { data: order } = await api.post("/orders/payment/verify", response);
+              router.push(`/orders/${order._id}`);
+              resolve();
+            } catch (err) {
+              setError(errMsg(err, "Payment verification failed. Contact support before paying again."));
+              resolve();
+            }
+          },
+          modal: { ondismiss: () => { setError("Payment checkout closed. Your order is not confirmed."); resolve(); } },
+        });
+        payment.on("payment.failed", (response) => {
+          setError(response.error?.description || "Payment failed. Please try again.");
+          resolve();
+        });
+        payment.open();
+      });
     } catch (err) {
       setError(errMsg(err, "Couldn't place your order. Please try again."));
+    } finally {
       setSubmitting(false);
     }
   };
@@ -148,6 +231,24 @@ export default function BookPage() {
             <span>Delivery</span>
             <span className={deliveryFee === 0 ? "font-semibold text-success" : ""}>{deliveryFee === 0 ? "FREE" : money(deliveryFee)}</span>
           </li>
+          {currentOffer && (
+            <li className="flex justify-between text-success">
+              <span>Offer ({currentOffer.offer.code})</span>
+              <span>-{money(currentOffer.discountAmount)}</span>
+            </li>
+          )}
+          {selected.length > 0 && (
+            <li className="border-t border-line pt-3">
+              {walletBalance >= total ? (
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input type="checkbox" checked={useWallet} onChange={(event) => setUseWallet(event.target.checked)} />
+                  <span><b>Pay with wallet</b><span className="block text-xs text-muted">Available: {money(walletBalance)}</span></span>
+                </label>
+              ) : (
+                <p className="text-xs text-muted">Wallet balance: {money(walletBalance)} — <Link className="text-link underline" href="/wallet">Add funds</Link>. Wallet payment requires the full order amount.</p>
+              )}
+            </li>
+          )}
           {expressFee > 0 && (
             <li className="flex justify-between text-muted">
               <span>Express pickup</span>
@@ -160,10 +261,24 @@ export default function BookPage() {
         <span className="font-semibold">Total</span>
         <span className="font-display text-2xl font-extrabold">{money(total)}</span>
       </div>
+      <div className="mt-4 flex gap-2">
+        <input value={couponCode} onChange={(e) => setCouponCode(e.target.value.toUpperCase())} placeholder="Offer code" className="input min-w-0 flex-1" aria-label="Offer code" />
+        <button type="button" onClick={applyCoupon} disabled={offerBusy || !couponCode || !selected.length} className="btn btn-secondary btn-sm">
+          {offerBusy ? "Checking…" : currentOffer ? "Update" : "Apply"}
+        </button>
+      </div>
+      {currentOffer && <button type="button" onClick={() => { setAppliedOffer(null); setCouponCode(""); }} className="mt-2 text-xs font-semibold text-danger">Remove offer</button>}
+      {offerError && <p className="mt-2 text-xs text-danger">{offerError}</p>}
+      {availableOffers.length > 0 && (
+        <div className="mt-3 rounded-xl bg-soft p-3 text-xs">
+          <p className="mb-1 font-bold">Current offers</p>
+          {availableOffers.map((offer) => <p key={offer._id}><b>{offer.code}</b> — {offer.title}</p>)}
+        </div>
+      )}
       {fees && selected.length > 0 && deliveryFee > 0 && (
         <p className="mt-2 text-xs text-muted">Add {money(fees.freeDeliveryAbove - subtotal)} more for free delivery.</p>
       )}
-      <p className="mt-2 text-xs text-muted">Pay on delivery.</p>
+      <p className="mt-2 text-xs text-muted">Pay securely online. Choose UPI QR in Razorpay checkout when it is available for your payment.</p>
       {outOfArea && (
         <div className="mt-4">
           <Alert tone="warn">
@@ -231,7 +346,10 @@ export default function BookPage() {
           </Section>
 
           <Section step="2" title="Where should we pick up?">
-            <LocationPicker value={location} onChange={onPick} store={config?.store} />
+            <LocationPicker value={location} onChange={onPick} store={config?.store} onGpsChange={setGpsGranted} />
+            <p className={`mt-3 text-sm ${gpsGranted ? "text-success" : "text-muted"}`}>
+              {gpsGranted ? "GPS location enabled. You can adjust the pin to your exact pickup point." : "Enable GPS and use your current location to continue."}
+            </p>
             {outOfArea && (
               <div className="mt-4">
                 <Alert tone="warn">
@@ -319,7 +437,7 @@ export default function BookPage() {
           {SummaryBody}
           {error && <div className="mt-4"><Alert>{error}</Alert></div>}
           <button type="submit" disabled={submitting || outOfArea} className="btn btn-primary mt-5 w-full py-3.5 text-base">
-            {submitting ? "Placing order…" : pickupType === "express" ? "Confirm express pickup" : "Confirm pickup"}
+            {submitting ? "Opening secure checkout…" : `Pay ${money(total)} and confirm`}
           </button>
         </aside>
 
@@ -333,7 +451,7 @@ export default function BookPage() {
         </div>
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-bg/95 p-3 backdrop-blur lg:hidden">
           <button type="submit" disabled={submitting || outOfArea} className="btn btn-primary w-full py-3.5 text-base">
-            {submitting ? "Placing order…" : `Confirm pickup · ${money(total)}`}
+            {submitting ? "Opening checkout…" : `Pay ${money(total)} and confirm`}
           </button>
         </div>
       </form>

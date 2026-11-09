@@ -5,6 +5,8 @@ const { protect, adminOnly, restrictTo } = require("../middleware/auth");
 const validate = require("../middleware/validate");
 
 router.post("/", protect, restrictTo("customer"), validate(c.createOrderSchema), c.createOrder);
+router.post("/payment/webhook", c.paymentWebhook);
+router.post("/payment/verify", protect, restrictTo("customer"), validate(c.verifyPaymentSchema), c.verifyPayment);
 router.get("/my", protect, restrictTo("customer"), c.getMyOrders);
 router.get("/", protect, adminOnly, c.getAllOrders);
 router.get("/:id", protect, c.getOrderById);

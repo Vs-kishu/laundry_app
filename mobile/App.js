@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer, DefaultTheme } from "@react-navigation/native";
@@ -16,6 +17,7 @@ import DriverScreen from "./src/screens/driver/DriverScreen";
 import AccountScreen from "./src/screens/AccountScreen";
 import { Button, H1, Loader, Muted } from "./src/components/ui";
 import { colors } from "./src/theme";
+import { getSocket } from "./src/socket";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -60,6 +62,52 @@ function AdminNotice() {
   );
 }
 
+function AppRealtimeNotice() {
+  const { token, user } = useAuth();
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    if (!token) return;
+    const socket = getSocket(token);
+    if (!socket) return;
+    let timer;
+    const show = (message) => {
+      setNotice(message);
+      clearTimeout(timer);
+      timer = setTimeout(() => setNotice(""), 6000);
+    };
+    const onOrder = ({ status }) => {
+      const label = (status || "updated").replaceAll("_", " ");
+      show(["admin", "super_admin"].includes(user?.role)
+        ? `An order was ${label}.`
+        : user?.role === "partner"
+          ? `Your delivery task is ${label}.`
+          : `Your order is ${label}.`);
+    };
+    const onTasks = () => show("New pickup or delivery task available.");
+    const onVerification = ({ status }) => show(`Partner application ${status}.`);
+    const onPartnerUpdate = () => show("A delivery partner's account or availability changed.");
+    socket.on("order:update", onOrder);
+    socket.on("tasks:changed", onTasks);
+    socket.on("partner:verification", onVerification);
+    socket.on("partner:update", onPartnerUpdate);
+    return () => {
+      clearTimeout(timer);
+      socket.off("order:update", onOrder);
+      socket.off("tasks:changed", onTasks);
+      socket.off("partner:verification", onVerification);
+      socket.off("partner:update", onPartnerUpdate);
+    };
+  }, [token, user?.role]);
+
+  if (!notice) return null;
+  return (
+    <View pointerEvents="none" style={{ position: "absolute", top: 48, left: 16, right: 16, zIndex: 1000, backgroundColor: "#0B1B3A", borderRadius: 16, padding: 14, elevation: 8 }}>
+      <Text style={{ color: "#fff", fontWeight: "700" }}>{notice}</Text>
+    </View>
+  );
+}
+
 const headerStyle = { headerTintColor: colors.ink, headerShadowVisible: false, headerStyle: { backgroundColor: colors.bg } };
 
 function RootNavigator() {
@@ -82,7 +130,7 @@ function RootNavigator() {
       </Stack.Navigator>
     );
   }
-  if (user.role === "admin") {
+  if (user.role === "admin" || user.role === "super_admin") {
     return (
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Admin" component={AdminNotice} />
@@ -105,6 +153,7 @@ export default function App() {
         <NavigationContainer theme={navTheme}>
           <RootNavigator />
         </NavigationContainer>
+        <AppRealtimeNotice />
         <StatusBar style="auto" />
       </AuthProvider>
     </SafeAreaProvider>

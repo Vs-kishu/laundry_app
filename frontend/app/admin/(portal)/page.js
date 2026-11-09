@@ -8,6 +8,7 @@ import { getSocket } from "../../../lib/socket";
 import Icon from "../../../components/Icons";
 import { Alert, EmptyState, PageLoader, StatusChip } from "../../../components/ui";
 import LocationPicker from "../../../components/LocationPicker";
+import OffersPanel from "../../../components/OffersPanel";
 import { itemsSummary, money, timeOnly } from "../../../lib/format";
 
 const FILTERS = [
@@ -44,6 +45,7 @@ function OrderRow({ o, partners, onAction, busy }) {
         <div className="text-right">
           <StatusChip status={o.status} />
           <p className="mt-1 font-display font-bold">{money(o.totalAmount)}</p>
+          <p className="mt-1 text-xs text-muted">{o.paymentStatus === "refunded" ? "Refunded to wallet" : o.paymentMethod === "wallet" ? "Paid from wallet" : o.paymentStatus === "paid" ? "Paid online" : "Payment pending"}{o.couponCode ? ` · ${o.couponCode}` : ""}</p>
         </div>
       </div>
 
@@ -151,8 +153,59 @@ function StoreSettings() {
   );
 }
 
+function WalletLedgerPanel() {
+  const [ledger, setLedger] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.get("/admin/wallet")
+      .then(({ data }) => setLedger(data))
+      .catch((err) => setError(errMsg(err, "Couldn't load the platform ledger.")));
+  }, []);
+
+  if (error) return <div className="mt-6"><Alert>{error}</Alert></div>;
+  if (!ledger) return <div className="mt-6 skeleton h-64 rounded-3xl" />;
+
+  const cards = [
+    ["Order payments", ledger.incoming.order_payment?.total || 0],
+    ["Wallet top-ups", ledger.incoming.wallet_topup?.total || 0],
+    ["Partner earnings credited", ledger.partnerEarnings],
+    ["Customer wallet balance", ledger.customerWalletLiability],
+    ["Partner wallet balance", ledger.partnerWalletLiability],
+  ];
+
+  return (
+    <section className="mt-6">
+      <p className="text-sm text-muted">Platform ledger and outstanding wallet balances. Partner earnings become available immediately after each task leg is completed.</p>
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {cards.map(([label, amount]) => (
+          <div className="card p-4" key={label}>
+            <dt className="text-xs text-muted">{label}</dt>
+            <dd className="mt-1 font-display text-2xl font-extrabold">{money(amount)}</dd>
+          </div>
+        ))}
+      </dl>
+      <h2 className="mt-7 text-xl font-bold">Platform transactions</h2>
+      <div className="mt-3 space-y-3">
+        {ledger.transactions.length === 0 && <div className="card p-6 text-sm text-muted">No wallet or payment entries yet.</div>}
+        {ledger.transactions.map((transaction) => (
+          <article key={transaction._id} className="card flex flex-wrap items-center justify-between gap-3 p-4">
+            <div>
+              <p className="font-semibold">{transaction.description}</p>
+              <p className="mt-1 text-xs capitalize text-muted">{timeOnly(transaction.createdAt)} · {transaction.type.replaceAll("_", " ")}{transaction.order?.orderNumber ? ` · ${transaction.order.orderNumber}` : ""}</p>
+            </div>
+            <p className={`font-display text-lg font-bold ${transaction.direction === "credit" ? "text-success" : "text-ink"}`}>
+              {transaction.direction === "credit" ? "+" : "−"}{money(transaction.amount)}
+            </p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function AdminPage() {
-  const { ready } = useRequireRole(["admin"], "/admin/login");
+  const { ready } = useRequireRole(["admin", "super_admin"], "/admin/login");
   const [tab, setTab] = useState("orders");
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState(null);
@@ -252,6 +305,8 @@ export default function AdminPage() {
           ["orders", "Orders"],
           ["store", "Store settings"],
           ["partners", `Partners${stats?.partnersPending ? ` (${stats.partnersPending} pending)` : ""}`],
+          ["offers", "Offers"],
+          ["wallet", "Wallet ledger"],
         ].map(([id, label]) => (
           <button
             key={id}
@@ -299,6 +354,8 @@ export default function AdminPage() {
       )}
 
       {tab === "store" && <StoreSettings />}
+      {tab === "offers" && <OffersPanel />}
+      {tab === "wallet" && <WalletLedgerPanel />}
 
       {tab === "partners" && (
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -322,6 +379,7 @@ export default function AdminPage() {
                   <div><dt className="text-xs text-muted">Licence / ID</dt><dd>{p.partner?.licenseNumber}</dd></div>
                   <div><dt className="text-xs text-muted">Tasks done</dt><dd>{p.partner?.completedTasks || 0}</dd></div>
                   <div><dt className="text-xs text-muted">Earned</dt><dd>{money(p.partner?.earnings || 0)}</dd></div>
+                  <div><dt className="text-xs text-muted">Wallet balance</dt><dd>{money(p.walletBalance || 0)}</dd></div>
                 </dl>
                 <div className="mt-4 flex gap-2 border-t border-line pt-4">
                   {st !== "approved" && <button onClick={() => verify(p._id, "approved")} className="btn btn-primary btn-sm">Approve</button>}

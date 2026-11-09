@@ -54,7 +54,7 @@ const invalidatePartner = (partnerId) => partnerId && activeCache.delete(String(
 async function canJoinOrder(user, orderId) {
   const order = await Order.findById(orderId).select("user pickupPartner deliveryPartner").lean();
   if (!order) return false;
-  if (user.role === "admin") return true;
+  if (["admin", "super_admin"].includes(user.role)) return true;
   const uid = String(user._id);
   return [order.user, order.pickupPartner, order.deliveryPartner].some((x) => x && String(x) === uid);
 }
@@ -84,7 +84,7 @@ function init(httpServer) {
   io.on("connection", (socket) => {
     const user = socket.data.user;
     socket.join(`user:${user._id}`);
-    if (user.role === "admin") socket.join("admin");
+    if (["admin", "super_admin"].includes(user.role)) socket.join("admin");
     if (user.role === "partner" && user.partner?.verificationStatus === "approved") socket.join("partners");
 
     socket.on("order:join", async (orderId, ack) => {
@@ -142,26 +142,6 @@ function init(httpServer) {
       }
     });
 
-    socket.on("disconnect", async () => {
-      if (user.role !== "partner") return;
-      try {
-        const remaining = await io.in(`user:${user._id}`).fetchSockets();
-        if (remaining.length) return;
-        // Don't drop a partner who is mid-delivery; they can reconnect.
-        const active = await Order.exists({
-          $or: [
-            { pickupPartner: user._id, status: { $in: PICKUP_ACTIVE } },
-            { deliveryPartner: user._id, status: { $in: DELIVERY_ACTIVE } },
-          ],
-        });
-        if (!active) {
-          await User.updateOne({ _id: user._id }, { $set: { "partner.isOnline": false } });
-          notifyPartnerChanged(user._id);
-        }
-      } catch (e) {
-        console.error("disconnect cleanup failed", e.message);
-      }
-    });
   });
 
   return io;
@@ -185,4 +165,8 @@ function notifyPartnerChanged(partnerId) {
   if (io) io.to("admin").emit("partner:update", { partnerId: String(partnerId) });
 }
 
-module.exports = { init, notifyOrder, notifyPartnerChanged, invalidatePartner };
+function notifyUser(userId, event, payload = {}) {
+  if (io && userId) io.to(`user:${userId}`).emit(event, payload);
+}
+
+module.exports = { init, notifyOrder, notifyPartnerChanged, notifyUser, invalidatePartner };

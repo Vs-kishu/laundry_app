@@ -1,4 +1,5 @@
 const { z } = require("zod");
+const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const User = require("../models/User");
 const Store = require("../models/Store");
@@ -10,8 +11,18 @@ const { serializeOrder } = require("../utils/orderView");
 const { PICKUP_ACTIVE, DELIVERY_ACTIVE } = require("../utils/orderFlow");
 const { notifyOrder, notifyPartnerChanged } = require("../realtime/socket");
 const { POPULATE_PARTNERS } = require("./orderController");
+const { addWalletEntry } = require("../utils/wallet");
 
-const statusSchema = z.object({ online: z.boolean() });
+const statusSchema = z.object({
+  online: z.boolean(),
+  location: z.object({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+  }).optional(),
+}).refine((value) => !value.online || value.location, {
+  message: "Enable location services and share your current location before going online",
+  path: ["location"],
+});
 const acceptSchema = z.object({ leg: z.enum(["pickup", "delivery"]) });
 const advanceSchema = z.object({ otp: z.string().trim().regex(/^\d{4}$/, "OTP must be 4 digits").optional() });
 
@@ -25,6 +36,9 @@ const mineFilter = (partnerId) => ({
 // @route PUT /api/partner/status
 const setOnline = asyncHandler(async (req, res) => {
   const { online } = req.body;
+  if (online) {
+    req.user.partner.location = { ...req.body.location, updatedAt: new Date() };
+  }
   if (!online && (await Order.exists(mineFilter(req.user._id)))) {
     return res.status(409).json({ message: "Finish your active tasks before going offline" });
   }
@@ -90,6 +104,10 @@ const getMyTasks = asyncHandler(async (req, res) => {
 // @route POST /api/partner/tasks/:orderId/accept
 const acceptTask = asyncHandler(async (req, res) => {
   if (!req.user.partner.isOnline) return res.status(409).json({ message: "Go online to accept tasks" });
+  const locationUpdatedAt = req.user.partner.location?.updatedAt?.getTime?.();
+  if (!locationUpdatedAt || Date.now() - locationUpdatedAt > 60000) {
+    return res.status(409).json({ message: "Live location has stopped. Re-enable location and wait for a fresh GPS fix before accepting tasks." });
+  }
 
   const activeCount = await Order.countDocuments(mineFilter(req.user._id));
   if (activeCount >= C.MAX_ACTIVE_TASKS_PER_PARTNER) {
@@ -125,35 +143,77 @@ const advanceTask = asyncHandler(async (req, res) => {
   const guard = { _id: order._id, status: order.status };
   let updated;
   let completedLeg = false;
+  let nextStatus;
 
   switch (order.status) {
     case "pickup_assigned":
       if (otp !== order.pickupOtp) return res.status(400).json({ message: "Incorrect pickup OTP" });
-      updated = await transition(guard, "picked_up");
+      nextStatus = "picked_up";
       break;
     case "picked_up":
-      updated = await transition(guard, "at_store");
+      nextStatus = "at_store";
       completedLeg = true;
       break;
     case "delivery_assigned":
-      updated = await transition(guard, "out_for_delivery");
+      nextStatus = "out_for_delivery";
       break;
     case "out_for_delivery":
       if (otp !== order.deliveryOtp) return res.status(400).json({ message: "Incorrect delivery OTP" });
-      updated = await transition(guard, "delivered", { paymentStatus: "paid" }); // cash collected at the door
+      nextStatus = "delivered";
       completedLeg = true;
       break;
     default:
       return res.status(400).json({ message: "Nothing to advance" });
   }
-  if (!updated) return res.status(409).json({ message: "Task changed, please refresh" });
-
   if (completedLeg) {
-    await User.updateOne(
-      { _id: uid },
-      { $inc: { "partner.completedTasks": 1, "partner.earnings": C.PARTNER_PAYOUT_PER_TASK } }
-    );
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        updated = await transition(guard, nextStatus, {}, { session });
+        if (!updated) {
+          const error = new Error("Task changed, please refresh");
+          error.statusCode = 409;
+          throw error;
+        }
+        await User.updateOne(
+          { _id: uid },
+          {
+            $inc: {
+              walletBalance: C.PARTNER_PAYOUT_PER_TASK,
+              "partner.completedTasks": 1,
+              "partner.earnings": C.PARTNER_PAYOUT_PER_TASK,
+            },
+          },
+          { session }
+        );
+        const reference = `partner-task:${order._id}:${nextStatus}`;
+        await addWalletEntry({
+          accountType: "partner",
+          user: uid,
+          type: "partner_earning",
+          direction: "credit",
+          amount: C.PARTNER_PAYOUT_PER_TASK,
+          reference,
+          order: order._id,
+          description: `Earning for ${order.orderNumber}`,
+        }, session);
+        await addWalletEntry({
+          accountType: "platform",
+          type: "partner_earning",
+          direction: "debit",
+          amount: C.PARTNER_PAYOUT_PER_TASK,
+          reference: `platform-${reference}`,
+          order: order._id,
+          description: `Partner earning for ${order.orderNumber}`,
+        }, session);
+      });
+    } finally {
+      await session.endSession();
+    }
+  } else {
+    updated = await transition(guard, nextStatus);
   }
+  if (!updated) return res.status(409).json({ message: "Task changed, please refresh" });
   notifyOrder(updated);
   const full = await Order.findById(updated._id).populate("user", "name phone").populate(POPULATE_PARTNERS).lean();
   res.json(serializeOrder(full, req.user));

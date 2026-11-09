@@ -163,6 +163,12 @@ export default function TrackingScreen({ route: nav }) {
             <Text style={{ fontWeight: "600", color: colors.ink }}>{money(i.subtotal)}</Text>
           </View>
         ))}
+        {order.discountAmount > 0 && (
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+            <Muted>Offer{order.couponCode ? ` (${order.couponCode})` : ""}</Muted>
+            <Text style={{ color: colors.success, fontWeight: "700" }}>−{money(order.discountAmount)}</Text>
+          </View>
+        )}
         <View style={{ flexDirection: "row", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 8 }}>
           <Muted>Delivery</Muted><Text style={{ color: colors.ink }}>{order.deliveryFee ? money(order.deliveryFee) : "FREE"}</Text>
         </View>
@@ -171,7 +177,7 @@ export default function TrackingScreen({ route: nav }) {
           <Text style={{ fontWeight: "800", color: colors.ink }}>Total</Text>
           <Text style={{ fontWeight: "800", color: colors.ink }}>{money(order.totalAmount)}</Text>
         </View>
-        <Muted style={{ marginTop: 4 }}>{order.paymentStatus === "paid" ? "Paid on delivery" : "Pay on delivery"}</Muted>
+        <Muted style={{ marginTop: 4 }}>{order.paymentStatus === "refunded" ? "Refunded to wallet" : order.paymentMethod === "wallet" ? "Paid from wallet" : order.paymentStatus === "paid" ? "Paid online" : "Payment pending"}</Muted>
         <Muted style={{ marginTop: 12 }}>📍 {order.pickupAddress}</Muted>
         {order.notes ? <Muted style={{ marginTop: 6 }}>“{order.notes}”</Muted> : null}
       </Card>

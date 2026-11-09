@@ -46,7 +46,7 @@ const FEATURES = [
   { icon: "bolt", title: "Express pickup", text: "Need it now? Express orders are matched to the nearest available partner first." },
   { icon: "shield", title: "OTP-secured handover", text: "Every pickup and delivery is verified with a one-time code only you can share." },
   { icon: "clock", title: "Clear timings", text: "A live ETA and a step-by-step timeline, so you always know what happens next." },
-  { icon: "wallet", title: "Simple pricing", text: "Pay per kg or per item. Delivery is free on orders above ₹299. Pay on delivery." },
+  { icon: "wallet", title: "Simple pricing", text: "Pay securely online per kg or item. Delivery is free on orders above ₹299." },
   { icon: "leaf", title: "Gentle on fabrics", text: "Separate wash cycles, fabric-safe detergents and careful pressing for every order." },
 ];
 
@@ -55,7 +55,7 @@ const FAQS = [
   { q: "Can I really track my pickup and delivery live?", a: "Yes. Once a partner accepts your order you can watch their live location and ETA on a map, both while they come to you and while they bring your clean clothes back." },
   { q: "What is the OTP for?", a: "Each order has a 4-digit pickup code and a 4-digit delivery code. You only share them in person, so your clothes can't be handed to or collected by the wrong person." },
   { q: "How long does laundry take?", a: "Wash & Fold and Wash & Iron are typically delivered within 48 hours of pickup. Dry cleaning can take a little longer depending on the garment." },
-  { q: "How do I pay?", a: "Pay on delivery once you've received your clean clothes. Delivery is free on orders above ₹299; a small fee applies below that." },
+  { q: "How do I pay?", a: "Pay securely online when you book. Delivery is free on orders above ₹299; a small fee applies below that." },
   { q: "Which areas do you serve?", a: "We serve addresses within our store's delivery radius. Drop a pin while booking and we'll tell you straight away whether your location is covered." },
 ];
 

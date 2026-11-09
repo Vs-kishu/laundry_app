@@ -16,11 +16,12 @@ function navFor(user) {
       { href: "/partner/signup", label: "Become a partner" },
     ];
   }
-  if (user.role === "admin") return [{ href: "/admin", label: "Dashboard" }];
-  if (user.role === "partner") return [{ href: "/partner", label: "Partner app" }];
+  if (["admin", "super_admin"].includes(user.role)) return [{ href: "/admin", label: "Dashboard" }];
+  if (user.role === "partner") return [{ href: "/partner", label: "Partner app" }, { href: "/wallet", label: "Wallet" }];
   return [
     { href: "/book", label: "Book pickup" },
     { href: "/orders", label: "My orders" },
+    { href: "/wallet", label: "Wallet" },
     { href: "/#services", label: "Services" },
   ];
 }

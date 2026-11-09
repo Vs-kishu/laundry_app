@@ -7,7 +7,7 @@ import { reverseGeocode, searchPlaces } from "../lib/geo";
 
 // Search box + "use my location" + a draggable pin on the map.
 // onChange({ lat, lng, address? }) fires whenever the chosen point changes.
-export default function LocationPicker({ value, onChange, store }) {
+export default function LocationPicker({ value, onChange, store, onGpsChange }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -59,15 +59,18 @@ export default function LocationPicker({ value, onChange, store }) {
 
   const useMyLocation = () => {
     setGeoError("");
+    onGpsChange?.(false);
     if (!navigator.geolocation) return setGeoError("Your browser doesn't support location.");
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocating(false);
+        onGpsChange?.(true);
         pick({ lat: pos.coords.latitude, lng: pos.coords.longitude });
       },
       () => {
         setLocating(false);
+        onGpsChange?.(false);
         setGeoError("Couldn't get your location. Allow location access, or search / tap on the map.");
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -126,7 +129,7 @@ export default function LocationPicker({ value, onChange, store }) {
         />
         {!value && (
           <div className="pointer-events-none absolute inset-x-0 top-3 z-[500] flex justify-center">
-            <span className="rounded-full bg-ink/85 px-4 py-1.5 text-xs font-medium text-bg backdrop-blur">Tap the map to drop a pin</span>
+            <span className="rounded-full bg-ink/85 px-4 py-1.5 text-xs font-medium text-bg backdrop-blur">Enable location to set your pickup point</span>
           </div>
         )}
       </div>

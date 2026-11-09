@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import api, { errMsg } from "../../../lib/api";
 import { useAuth, useRequireRole } from "../../../context/AuthContext";
-import { closeSocket, getSocket } from "../../../lib/socket";
+import { getSocket } from "../../../lib/socket";
 import { directionsUrl, haversineKm } from "../../../lib/geo";
 import { money, timeOnly } from "../../../lib/format";
 import useStoreConfig from "../../../hooks/useStoreConfig";
@@ -16,7 +16,7 @@ const NEXT_ACTION = {
   pickup_assigned: { dest: "customer", label: "Picked up", needsOtp: true, hint: "Ask the customer for their 4-digit pickup OTP", go: "Navigate to customer" },
   picked_up: { dest: "store", label: "Reached store - handed over", needsOtp: false, hint: "Hand the clothes to store staff", go: "Navigate to store" },
   delivery_assigned: { dest: "store", label: "Collected from store - start delivery", needsOtp: false, hint: "Collect the clean clothes at the store", go: "Navigate to store" },
-  out_for_delivery: { dest: "customer", label: "Delivered", needsOtp: true, hint: "Ask the customer for their 4-digit delivery OTP and collect cash", go: "Navigate to customer" },
+  out_for_delivery: { dest: "customer", label: "Delivered", needsOtp: true, hint: "Ask the customer for their 4-digit delivery OTP", go: "Navigate to customer" },
 };
 
 const DEV = process.env.NODE_ENV !== "production";
@@ -27,7 +27,8 @@ export default function PartnerPage() {
   const config = useStoreConfig();
 
   const approved = user?.partner?.verificationStatus === "approved";
-  const [online, setOnline] = useState(false);
+  const online = Boolean(user?.partner?.isOnline);
+  const [availabilityReady, setAvailabilityReady] = useState(false);
   const [available, setAvailable] = useState([]);
   const [mine, setMine] = useState({ active: [], history: [] });
   const [selectedId, setSelectedId] = useState(null);
@@ -41,8 +42,11 @@ export default function PartnerPage() {
   const simPos = useRef(null);
 
   useEffect(() => {
-    if (user?.partner) setOnline(!!user.partner.isOnline);
-  }, [user?.partner?.isOnline]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!ready || !approved) return;
+    refreshUser()
+      .catch((err) => setError(errMsg(err, "Couldn't restore your availability status.")))
+      .finally(() => setAvailabilityReady(true));
+  }, [ready, approved, refreshUser]);
 
   // ---------- data ----------
   const loadTasks = useCallback(async () => {
@@ -61,8 +65,7 @@ export default function PartnerPage() {
     if (!ready || !approved) return;
     loadTasks();
 
-    // Reconnect so this socket joins the "partners" room (approval may be newer than the connection).
-    closeSocket();
+    // Reuse the shared authenticated socket so mounting this page doesn't drop other live listeners.
     const socket = getSocket();
     socket?.on("tasks:changed", loadTasks);
     socket?.on("order:update", loadTasks);
@@ -149,13 +152,24 @@ export default function PartnerPage() {
   const toggleOnline = async () => {
     setError("");
     try {
-      const { data } = await api.put("/partner/status", { online: !online });
-      setOnline(data.isOnline);
+      let location;
+      if (!online) {
+        if (!navigator.geolocation) throw new Error("This device doesn't support GPS. Enable location services to go online.");
+        location = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            (err) => reject(new Error(err.code === 1 ? "Allow location access in your browser settings to go online." : "Couldn't get a GPS fix. Turn on location services and try again.")),
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+          );
+        });
+        setMyPos(location);
+      }
+      const { data } = await api.put("/partner/status", { online: !online, ...(location ? { location } : {}) });
+      await refreshUser();
       if (!data.isOnline) {
         setMyPos(null);
         setSimulate(false);
       }
-      await refreshUser();
       loadTasks();
     } catch (err) {
       setError(errMsg(err));
@@ -210,17 +224,23 @@ export default function PartnerPage() {
         {approved && (
           <button
             onClick={toggleOnline}
+            disabled={!availabilityReady}
             role="switch"
             aria-checked={online}
-            className={`flex items-center gap-3 rounded-full border px-5 py-2.5 font-semibold transition ${online ? "border-success/40 bg-success/10 text-success" : "border-line bg-surface text-muted"}`}
+            className={`flex items-center gap-3 rounded-full border px-5 py-2.5 font-semibold transition disabled:cursor-wait disabled:opacity-60 ${online ? "border-success/40 bg-success/10 text-success" : "border-line bg-surface text-muted"}`}
           >
             <span className={`relative h-6 w-11 rounded-full transition ${online ? "bg-success" : "bg-line"}`}>
               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${online ? "left-[22px]" : "left-0.5"}`} />
             </span>
-            {online ? "You're online" : "You're offline"}
+            {!availabilityReady ? "Restoring status…" : online ? "You're online" : "You're offline"}
           </button>
         )}
       </div>
+      {approved && (
+        <p className="mt-2 text-right text-xs text-muted">
+          Your status is saved until you switch it off. Refreshing this page won't take you offline.
+        </p>
+      )}
 
       {status !== "approved" && (
         <div className="mt-8">
@@ -327,7 +347,7 @@ export default function PartnerPage() {
                             {selected.notes && <p className="rounded-xl bg-soft px-3 py-2 text-muted">&ldquo;{selected.notes}&rdquo;</p>}
                             <p className="text-xs text-muted">{selected.items.map((i) => `${i.serviceName} × ${i.quantity}${i.unit}`).join(", ")}</p>
                             {selected.status === "out_for_delivery" && (
-                              <p className="rounded-xl bg-sun/25 px-3 py-2 font-semibold">Collect cash: {money(selected.totalAmount)}</p>
+                              <p className="rounded-xl bg-success/10 px-3 py-2 font-semibold">Payment: {selected.paymentStatus === "refunded" ? "Refunded to wallet" : selected.paymentMethod === "wallet" ? "Paid from wallet" : selected.paymentStatus === "paid" ? "Paid online" : "Not paid"}</p>
                             )}
                           </div>
 

@@ -34,13 +34,16 @@ const orderSchema = new mongoose.Schema(
     notes: { type: String, default: "", maxlength: 300 },
 
     subtotal: { type: Number, required: true },
+    discountAmount: { type: Number, default: 0 },
+    couponCode: { type: String, default: "" },
     deliveryFee: { type: Number, default: 0 },
     expressFee: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },
 
     status: { type: String, enum: STATUSES, default: "placed" },
-    paymentMethod: { type: String, enum: ["cod"], default: "cod" },
-    paymentStatus: { type: String, enum: ["pending", "paid"], default: "pending" },
+    paymentMethod: { type: String, enum: ["cod", "razorpay", "wallet"], default: "razorpay" },
+    paymentStatus: { type: String, enum: ["pending", "paid", "refunded"], default: "pending" },
+    paymentReference: { type: String, default: undefined, unique: true, sparse: true },
 
     pickupPartner: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     deliveryPartner: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

@@ -31,7 +31,7 @@ const restrictTo =
     return res.status(403).json({ message: "You don't have access to this resource" });
   };
 
-const adminOnly = restrictTo("admin");
+const adminOnly = restrictTo("admin", "super_admin");
 
 // Partner routes that change state require an admin-approved account.
 const approvedPartner = (req, res, next) => {
