@@ -39,9 +39,9 @@ use the admin console at `/admin`.
 The backend serverless handler connects to MongoDB before processing each request and reuses the
 connection across warm invocations. Configure `MONGO_URI`, a `JWT_SECRET` of at least 32 characters,
 and `CLIENT_URL` in the backend Vercel project's Environment Variables, then redeploy. Use the root
-`vercel.json` when the Vercel project root is this repository, or `backend/vercel.json` when its
-Root Directory is `backend`. Check `/api/health` after deployment; `degraded` means MongoDB is not
-connected.
+`backend/vercel.json` with the backend project's Root Directory set to `backend`. Set the frontend
+project's Root Directory to `frontend` so Vercel builds it as a Next.js app. Check `/api/health`
+after backend deployment; `degraded` means MongoDB is not connected.
 
 To add five approved nearby delivery partners for testing, first confirm `MONGO_URI` points to your
 intended non-production database, then run `cd backend && npm run seed:partners -- --yes`.
