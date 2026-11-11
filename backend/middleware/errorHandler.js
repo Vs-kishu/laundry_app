@@ -1,4 +1,5 @@
 const { isProd } = require("../config/env");
+const crypto = require("crypto");
 
 const notFound = (req, res) => res.status(404).json({ message: "Route not found" });
 
@@ -15,14 +16,29 @@ const errorHandler = (err, req, res, next) => {
       ? "An offer with this code already exists"
       : err.keyPattern?.email
         ? "An account with this email already exists"
-        : "A record with this value already exists";
+        : err.keyPattern?.phone
+          ? "An account with this mobile number already exists"
+          : "A record with this value already exists";
     return res.status(409).json({ message });
   }
   if (err.message === "CORS blocked") return res.status(403).json({ message: "Origin not allowed" });
   if (err.type === "entity.parse.failed") return res.status(400).json({ message: "Malformed JSON body" });
+  if (err.type === "entity.too.large") return res.status(413).json({ message: "Request body is too large" });
 
-  console.error(err);
-  res.status(err.status || err.statusCode || 500).json({ message: isProd ? "Something went wrong" : err.message });
+  const status = err.status || err.statusCode || 500;
+  const requestId = req.headers["x-vercel-id"] || crypto.randomUUID();
+  console.error("API request failed", {
+    requestId,
+    method: req.method,
+    path: req.originalUrl,
+    status,
+    name: err.name,
+    message: err.message,
+  });
+  res.status(status).json({
+    message: !isProd && err.message ? err.message : "The server could not complete this request.",
+    requestId,
+  });
 };
 
 module.exports = { notFound, errorHandler };

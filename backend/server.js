@@ -15,9 +15,14 @@ realtime.init(server);
 
 const PORT = process.env.PORT || 5000;
 
-connectDB().then(() => {
-  server.listen(PORT, () => console.log(`Laundry Point API + sockets listening on port ${PORT}`));
-});
+connectDB()
+  .then(() => {
+    server.listen(PORT, () => console.log(`Laundry Point API + sockets listening on port ${PORT}`));
+  })
+  .catch((error) => {
+    console.error(`Error connecting to MongoDB: ${error.message}`);
+    process.exit(1);
+  });
 
 // Graceful shutdown so deploys don't drop in-flight requests.
 const shutdown = (signal) => {

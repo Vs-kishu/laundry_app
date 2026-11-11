@@ -11,11 +11,11 @@ picks up (home to store), the store cleans, a partner delivers (store to home) -
 
 ```bash
 # backend
-cd backend && cp .env.example .env      # set JWT_SECRET
+cd backend                              # configure .env.local
 npm install && npm run seed && npm run dev
 
 # frontend
-cd frontend && cp .env.example .env.local
+cd frontend                             # configure .env.local if needed
 npm install && npm run dev
 ```
 
@@ -33,6 +33,15 @@ Existing accounts are never overwritten. In production, configure `SEED_ADMIN_EM
 `SEED_ADMIN_PASSWORD` and `SEED_SUPER_ADMIN_EMAIL` / `SEED_SUPER_ADMIN_PASSWORD`; demo
 customer and delivery-partner accounts are only created outside production. Both admin roles
 use the admin console at `/admin`.
+
+## Deploying the backend to Vercel
+
+The backend serverless handler connects to MongoDB before processing each request and reuses the
+connection across warm invocations. Configure `MONGO_URI`, a `JWT_SECRET` of at least 32 characters,
+and `CLIENT_URL` in the backend Vercel project's Environment Variables, then redeploy. Use the root
+`vercel.json` when the Vercel project root is this repository, or `backend/vercel.json` when its
+Root Directory is `backend`. Check `/api/health` after deployment; `degraded` means MongoDB is not
+connected.
 
 To add five approved nearby delivery partners for testing, first confirm `MONGO_URI` points to your
 intended non-production database, then run `cd backend && npm run seed:partners -- --yes`.

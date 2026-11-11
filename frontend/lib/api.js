@@ -27,7 +27,21 @@ api.interceptors.response.use(
   }
 );
 
-export const errMsg = (err, fallback = "Something went wrong. Please try again.") =>
-  err?.response?.data?.message || (err?.code === "ERR_NETWORK" ? "Can't reach the server. Check your connection." : fallback);
+export const errMsg = (err, fallback = "Something went wrong. Please try again.") => {
+  const responseMessage = err?.response?.data?.message;
+  if (responseMessage) return responseMessage;
+
+  if (err?.code === "ECONNABORTED") {
+    return "The server took too long to respond. Please try again in a moment.";
+  }
+  if (!err?.response) {
+    return "Can't reach the backend. Check the API URL and backend deployment, then try again.";
+  }
+  if (err.response.status >= 500) {
+    const requestId = err.response.data?.requestId;
+    return `The backend returned an error (HTTP ${err.response.status}). Check the backend logs${requestId ? ` using request ID ${requestId}` : ""}.`;
+  }
+  return fallback;
+};
 
 export default api;
